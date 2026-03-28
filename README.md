@@ -1,53 +1,85 @@
 # BSLView - Total Commander Lister Plugin
 
-WLX-плагин для Total Commander, обеспечивающий просмотр файлов 1С:Предприятие (.bsl, .os, .sdbl, .query) с подсветкой синтаксиса по нажатию F3.
+WLX-плагин для Total Commander, обеспечивающий просмотр и редактирование файлов 1С:Предприятие (.bsl, .os, .sdbl, .query) с подсветкой синтаксиса по нажатию F3.
 
-Основан на архитектуре [HTMLView](http://sites.google.com/site/htmlview/) / [wlx-markdown-viewer](https://github.com/rg-software/wlx-markdown-viewer) и грамматике из проекта [1c-syntax](https://github.com/1c-syntax/1c-syntax).
+Использует [Monaco Editor](https://microsoft.github.io/monaco-editor/) (движок VS Code) через WebView2 с полной подсветкой синтаксиса BSL. При отсутствии WebView2 — fallback на встроенный C++ подсветчик через IE.
+
+Цветовая схема подсветки соответствует конфигуратору 1С (на основе проекта [bsl_console](https://github.com/salexdv/bsl_console)).
 
 ## Возможности
 
-- Подсветка синтаксиса BSL/OneScript (ключевые слова, комментарии, строки, числа, даты, директивы препроцессора, аннотации, встроенные функции)
+- **Monaco Editor** с подсветкой синтаксиса BSL/OneScript
+- Цветовая схема как в Конфигураторе 1С (светлая тема) и VS Code (темная тема)
+- **Панель процедур/функций** (outline) справа с фильтром, сортировкой и изменяемым размером
+- **Группировка по областям** (#Область / #Region) в панели процедур
+- **Режим редактирования** с сохранением (Ctrl+S)
+- **Переключатель темы** (светлая/темная) с автоопределением по настройкам TC
 - Двуязычная поддержка (русский + английский синтаксис 1С)
-- Поддержка светлой и темной темы (автоматически определяется по настройкам TC)
-- Нумерация строк
-- Поиск текста (F7 в Lister)
-- Копирование (Ctrl+C) и выделение всего (Ctrl+A)
-- Автоопределение кодировки (UTF-8, UTF-16, Windows-1251)
+- Minimap (карта кода)
+- Нумерация строк, сворачивание блоков (folding)
+- Автоопределение кодировки (UTF-8 BOM, UTF-8, UTF-16 LE/BE, Windows-1251)
 - Поддерживаемые расширения: `.bsl`, `.os`, `.sdbl`, `.query`
 - 32-bit и 64-bit версии
+- Fallback на C++ подсветчик через IE при отсутствии WebView2
+
+## BSLEdit - автономный редактор
+
+В комплекте идет **BSLEdit.exe** — автономный редактор BSL файлов на базе Monaco Editor:
+
+- Открытие файлов через командную строку или диалог выбора файла
+- Автоматическая ассоциация с файлами `.bsl` и `.os` при первом запуске
+- Автоопределение темы (светлая/темная) по настройкам Windows
+- Полный набор функций: панель процедур, фильтр, сортировка, редактирование, сохранение
+
+## Скриншоты
+
+### Светлая тема (стиль Конфигуратора 1С)
+Ключевые слова — красные, идентификаторы — синие, комментарии — зеленые, строки и числа — черные.
+
+### Темная тема
+Ключевые слова — бирюзовые, строки — оранжевые, комментарии — зеленые, числа — светло-зеленые.
 
 ## Сборка
 
 ### Требования
 
-- Visual Studio 2022 (Community/Professional/Enterprise)
-- Компонент "Desktop development with C++" (C++ workload)
+- Visual Studio 2022 Build Tools (или полная VS 2022)
+- Компонент "Desktop development with C++"
 - Windows SDK 10.0
+- WebView2 SDK (включен в репозиторий как `webview2sdk/`)
 
 ### Компиляция
 
-1. Откройте `BSLView.sln` в Visual Studio 2022
-2. Выберите конфигурацию:
-   - `Release | Win32` — для 32-bit TC (BSLView.wlx)
-   - `Release | x64` — для 64-bit TC (BSLView.wlx64)
-3. Build -> Build Solution (Ctrl+Shift+B)
-4. Результат будет в `bin\Release\x32\` или `bin\Release\x64\`
-
-### Компиляция из командной строки
+Запустите `build.bat` из Developer Command Prompt:
 
 ```batch
-:: Откройте Developer Command Prompt for VS 2022
-:: 32-bit:
-msbuild BSLView.sln /p:Configuration=Release /p:Platform=Win32
-:: 64-bit:
-msbuild BSLView.sln /p:Configuration=Release /p:Platform=x64
+build.bat
 ```
 
-## Установка
+Скрипт соберет:
+- `BSLView.wlx` — 32-bit плагин для Total Commander
+- `BSLView.wlx64` — 64-bit плагин для Total Commander
+- `BSLEdit.exe` — 64-bit автономный редактор
+
+### Структура проекта
+
+| Файл | Описание |
+|------|----------|
+| `main.cpp` | Точка входа WLX-плагина, экспорты API Lister |
+| `bsledit.cpp` | Точка входа BSLEdit.exe |
+| `monaco_template.h` | HTML/JS шаблон Monaco Editor с токенизатором BSL |
+| `webview2host.cpp/h` | Обертка над WebView2 (создание, навигация, сохранение) |
+| `browserhost.cpp/h` | Обертка над IE WebBrowser (fallback) |
+| `bslhighlight.cpp/h` | C++ подсветчик BSL для IE fallback |
+| `BSLView.ini` | Конфигурация плагина |
+| `build.bat` | Скрипт сборки |
+| `exports.def` | DEF-файл экспортов DLL |
+
+## Установка плагина
 
 ### Автоматическая (рекомендуется)
 
-1. Скопируйте `BSLView.wlx` (и/или `BSLView.wlx64`), `BSLView.ini`, `pluginst.inf` в ZIP-архив
+1. Скачайте `BSLView.zip` из [Releases](../../releases)
 2. Откройте архив в Total Commander — установка предложится автоматически
 
 ### Ручная
@@ -58,9 +90,15 @@ msbuild BSLView.sln /p:Configuration=Release /p:Platform=x64
 2. В Total Commander: Configuration -> Options -> Plugins -> Lister (WLX)
 3. Нажмите "Add" и выберите `BSLView.wlx` / `BSLView.wlx64`
 
+## Установка BSLEdit
+
+1. Скачайте `BSLEdit.zip` из [Releases](../../releases)
+2. Распакуйте `BSLEdit.exe` в любую папку
+3. При первом запуске программа автоматически зарегистрирует ассоциацию файлов `.bsl` и `.os`
+
 ## Настройка
 
-Настройки хранятся в `BSLView.ini` рядом с плагином:
+Настройки плагина хранятся в `BSLView.ini` рядом с плагином:
 
 ```ini
 [Options]
@@ -68,6 +106,8 @@ FontFamily=Consolas, Courier New, monospace
 FontSize=14
 TabSize=4
 LineNumbers=1
+Theme=auto    ; auto (по настройкам TC), light, dark
+UseMonaco=1   ; 1 = Monaco Editor, 0 = IE fallback
 
 [Extensions]
 BSLExtensions=bsl;os
@@ -86,7 +126,11 @@ QueryExtensions=sdbl;query
 | Препроцессор | `#Область`/`#Region`, `#Если`/`#If` |
 | Аннотации | `&НаСервере`/`&AtServer`, `&НаКлиенте`/`&AtClient` |
 | Константы | `Истина`/`True`, `Ложь`/`False`, `Неопределено`/`Undefined`, `NULL` |
-| Встроенные функции | `Сообщить`, `СтрДлина`, `Формат`, `ТипЗнч` и др. |
+
+## Зависимости
+
+- [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) — для Monaco Editor (обычно уже установлен с Windows 10/11)
+- [Monaco Editor](https://microsoft.github.io/monaco-editor/) — загружается с CDN при первом открытии
 
 ## Лицензия
 
