@@ -1,0 +1,5 @@
+[plugininstall]
+description=1C:Enterprise BSL/OS syntax highlighting viewer
+type=wlx
+file=BSLView.wlx
+defaultdir=plugins\wlx\BSLView
