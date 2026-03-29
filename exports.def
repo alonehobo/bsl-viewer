@@ -1,0 +1,10 @@
+LIBRARY BSLView
+EXPORTS
+    ListLoad
+    ListLoadNext
+    ListCloseWindow
+    ListGetDetectString
+    ListSearchText
+    ListSearchTextW
+    ListSendCommand
+    ListSetDefaultParams
