@@ -1,0 +1,15 @@
+*.wlx
+*.wlx64
+*.obj
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.zip
+obj32/
+obj64/
+objexe/
+bin/
+*.exe
+webview2.nupkg
+webview2sdk/
