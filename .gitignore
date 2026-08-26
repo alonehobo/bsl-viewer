@@ -13,3 +13,9 @@ bin/
 *.exe
 webview2.nupkg
 webview2sdk/
+build.log
+
+# Third-party assets fetched by tools/fetch-monaco.ps1
+web/vs/
+web/marked.min.js
+web/turndown.min.js

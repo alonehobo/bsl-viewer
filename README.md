@@ -2,7 +2,7 @@
 
 WLX-плагин для Total Commander, обеспечивающий просмотр и редактирование файлов 1С:Предприятие (.bsl, .os, .sdbl, .query) с подсветкой синтаксиса по нажатию F3.
 
-Использует [Monaco Editor](https://microsoft.github.io/monaco-editor/) (движок VS Code) через WebView2 с полной подсветкой синтаксиса BSL. При отсутствии WebView2 — fallback на встроенный C++ подсветчик через IE.
+Использует [Monaco Editor](https://microsoft.github.io/monaco-editor/) (движок VS Code) через WebView2 с полной подсветкой синтаксиса BSL. Monaco поставляется вместе с плагином (папка `web`), интернет не требуется. При отсутствии WebView2 — fallback на встроенный C++ подсветчик через IE.
 
 Цветовая схема подсветки соответствует конфигуратору 1С (на основе проекта [bsl_console](https://github.com/salexdv/bsl_console)).
 
@@ -50,16 +50,32 @@ WLX-плагин для Total Commander, обеспечивающий просм
 
 ### Компиляция
 
-Запустите `build.bat` из Developer Command Prompt:
-
 ```batch
 build.bat
 ```
 
+При первом запуске скрипт сам скачает Monaco в `web\vs` (см. `tools\fetch-monaco.ps1`).
 Скрипт соберет:
 - `BSLView.wlx` — 32-bit плагин для Total Commander
 - `BSLView.wlx64` — 64-bit плагин для Total Commander
 - `BSLEdit.exe` — 64-bit автономный редактор
+
+### Тесты
+
+```batch
+tools\run-tests.bat
+```
+
+Проверяют определение кодировки, побайтовый round-trip при сохранении и JSON-экранирование.
+
+### Замеры производительности
+
+```batch
+powershell -File tools\bench-plugin.ps1
+```
+
+Прогоняет `.wlx64` через `tools\wlxhost.cpp` — минимальную замену Lister'а — и
+измеряет задержку до отрисовки после `ListLoad`.
 
 ### Структура проекта
 
@@ -67,8 +83,10 @@ build.bat
 |------|----------|
 | `main.cpp` | Точка входа WLX-плагина, экспорты API Lister |
 | `bsledit.cpp` | Точка входа BSLEdit.exe |
-| `monaco_template.h` | HTML/JS шаблон Monaco Editor с токенизатором BSL |
-| `webview2host.cpp/h` | Обертка над WebView2 (создание, навигация, сохранение) |
+| `bslcommon.cpp/h` | Чтение/запись файлов с сохранением кодировки, JSON-экранирование |
+| `webview2host.cpp/h` | Обертка над WebView2: общее окружение, пул прогретых экземпляров |
+| `web/viewer.html/css/js` | Интерфейс редактора: Monaco, токенизатор BSL, панель структуры |
+| `web/vs/` | Monaco Editor (скачивается, не хранится в репозитории) |
 | `browserhost.cpp/h` | Обертка над IE WebBrowser (fallback) |
 | `bslhighlight.cpp/h` | C++ подсветчик BSL для IE fallback |
 | `BSLView.ini` | Конфигурация плагина |
@@ -82,13 +100,41 @@ build.bat
 1. Скачайте `BSLView.zip` из [Releases](../../releases)
 2. Откройте архив в Total Commander — установка предложится автоматически
 
+### Из локальной сборки
+
+Закройте Total Commander (при выходе он перезаписывает `wincmd.ini` из памяти) и выполните:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\install-tc.ps1 -TcDir "C:\Path\To\Total Commander"
+```
+
+Скрипт копирует плагин вместе с папкой `web`, регистрирует его в `wincmd.ini` (обновляя
+существующую запись, если она есть, — дубликат не создается) и сохраняет резервную копию
+в `wincmd.ini.bak`. Уже имеющийся `BSLView.ini` не затирается: в него дописываются только
+отсутствующие ключи. Скрипт рассчитан на повторные запуски после каждой пересборки.
+
+`-TcDir` лучше указывать явно: без него путь берется из запущенного процесса или реестра,
+а там может быть прописана другая установка.
+
+Total Commander перебирает lister-плагины в порядке их номеров в `wincmd.ini`, поэтому плагин,
+объявивший то же расширение раньше, перехватит файл. Чтобы поднять BSLView выше конкурентов:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\install-tc.ps1 -TcDir "..." -PromoteBefore "MarkdownView,XMLReview"
+```
+
 ### Ручная
 
 1. Скопируйте файлы в папку `%COMMANDER_PATH%\plugins\wlx\BSLView\`:
    - `BSLView.wlx` (32-bit) и/или `BSLView.wlx64` (64-bit)
    - `BSLView.ini`
+   - папку `web` целиком — без нее плагин откатится на IE-подсветку
 2. В Total Commander: Configuration -> Options -> Plugins -> Lister (WLX)
 3. Нажмите "Add" и выберите `BSLView.wlx` / `BSLView.wlx64`
+
+Total Commander кэширует строку распознавания расширений в `wincmd.ini` (`N_detect=`) и не
+перечитывает ее из плагина. Если вы меняли списки расширений в `BSLView.ini`, переустановите
+плагин в TC или поправьте `N_detect` вручную.
 
 ## Установка BSLEdit
 
@@ -106,13 +152,24 @@ FontFamily=Consolas, Courier New, monospace
 FontSize=14
 TabSize=4
 LineNumbers=1
-Theme=auto    ; auto (по настройкам TC), light, dark
-UseMonaco=1   ; 1 = Monaco Editor, 0 = IE fallback
+Theme=auto       ; auto (по настройкам TC), light, dark
+UseMonaco=1      ; 1 = Monaco Editor, 0 = IE fallback
+MaxFileSizeMB=64 ; файлы крупнее отдаются встроенному просмотрщику TC
+KeepWarm=1       ; держать один экземпляр WebView2 между файлами
 
 [Extensions]
 BSLExtensions=bsl;os
 QueryExtensions=sdbl;query
+TextExtensions=md;markdown;json;xml;ps1;psm1;psd1;html;htm
 ```
+
+`KeepWarm=1` — главный параметр скорости: плагин держит один прогретый экземпляр
+WebView2 с уже загруженным Monaco, поэтому F3 открывает файл примерно за полсекунды
+вместо нескольких секунд. Ценой примерно 150 МБ памяти; поставьте `0`, если память
+важнее скорости.
+
+`[Extensions]` управляет и строкой определения типов, которую плагин отдает Total
+Commander, так что добавленное сюда расширение начнет обрабатываться после перезапуска TC.
 
 ## Подсвечиваемые элементы
 

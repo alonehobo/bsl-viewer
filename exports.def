@@ -1,7 +1,9 @@
 LIBRARY BSLView
 EXPORTS
     ListLoad
+    ListLoadW
     ListLoadNext
+    ListLoadNextW
     ListCloseWindow
     ListGetDetectString
     ListSearchText

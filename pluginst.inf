@@ -2,4 +2,5 @@
 description=1C:Enterprise BSL/OS syntax highlighting viewer
 type=wlx
 file=BSLView.wlx
+file64=BSLView.wlx64
 defaultdir=plugins\wlx\BSLView

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>BSLView</title>
+<link rel="stylesheet" href="viewer.css">
+<link rel="stylesheet" href="vs/editor/editor.main.css">
+<link rel="preload" as="script" href="vs/loader.js">
+<link rel="preload" as="script" href="vs/editor/editor.main.js">
+</head>
+<body>
+<div id="loading">Загрузка редактора…</div>
+<div id="main" style="display:none">
+<div id="editor"></div>
+<div id="preview-handle" title="Ширина панелей"></div>
+<iframe id="preview" sandbox="allow-same-origin"></iframe>
+<div id="toolbar">
+<button id="btn-theme" class="tb-btn" title="Переключить тему">&#9788;</button>
+<button id="btn-edit" class="tb-btn" title="Редактирование (Ctrl+E)">&#9998; Просмотр</button>
+<button id="btn-save" class="tb-btn" title="Сохранить (Ctrl+S)" style="display:none">&#128190; Сохранить</button>
+<button id="btn-preview" class="tb-btn" title="Исходник и просмотр" style="display:none">&#128065; Вид</button>
+<button id="btn-pdf" class="tb-btn" title="Экспорт в PDF">&#128196; PDF</button>
+</div>
+<button id="outline-toggle" title="Список процедур/функций">&#9776;</button>
+<div id="outline-panel">
+  <div id="resize-handle"></div>
+  <div id="outline-content">
+    <div id="outline-top">
+      <div id="outline-header"><button id="sort-btn"></button><span id="outline-count"></span></div>
+      <div class="filter-wrap">
+        <input id="outline-filter" type="text" placeholder="Фильтр…">
+        <button id="filter-clear" title="Очистить">&times;</button>
+      </div>
+    </div>
+    <div id="outline-list"></div>
+  </div>
+</div>
+</div>
+<div id="statusbar">
+  <span id="sb-pos">Стр 1, Кол 1</span>
+  <span id="sb-sel"></span>
+  <span id="sb-lines">Строк: 0</span>
+</div>
+<div id="print-root"></div>
+<script src="viewer.js"></script>
+</body>
+</html>
