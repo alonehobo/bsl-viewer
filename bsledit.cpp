@@ -25,12 +25,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         return 0;
 
     case WM_BSLVIEW_WEBVIEW_FAILED:
-        MessageBoxW(hwnd,
-            L"Не удалось запустить WebView2.\n\n"
-            L"Установите Microsoft Edge WebView2 Runtime:\n"
-            L"https://developer.microsoft.com/microsoft-edge/webview2/",
-            APP_TITLE, MB_OK | MB_ICONERROR);
-        DestroyWindow(hwnd);
+        {
+            HRESULT hr = CWebView2Host::LastError();
+            if (!hr) hr = (HRESULT)wParam;
+            wchar_t text[640];
+            wsprintfW(text,
+                L"Не удалось запустить WebView2 (0x%08X).\n\n"
+                L"Если Runtime уже установлен, закройте Total Commander и откройте редактор снова — "
+                L"плагин мог занять профиль браузера.\n\n"
+                L"Иначе установите Microsoft Edge WebView2 Runtime:\n"
+                L"https://go.microsoft.com/fwlink/p/?LinkId=2124703",
+                (unsigned)hr);
+            MessageBoxW(hwnd, text, APP_TITLE, MB_OK | MB_ICONERROR);
+            DestroyWindow(hwnd);
+        }
         return 0;
 
     case WM_DESTROY:

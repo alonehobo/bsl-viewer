@@ -43,6 +43,8 @@ public:
 
     static void Shutdown();
 
+    static HRESULT LastError();
+
     // Hands back a host bound to `parent`, reusing the parked instance when one
     // is available. Returns immediately; if nothing was parked the browser is
     // attached later. Never returns NULL unless allocation fails.

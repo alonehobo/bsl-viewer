@@ -1,7 +1,6 @@
 #include "webview2host.h"
 
 #include <WebView2.h>
-#include <WebView2EnvironmentOptions.h>   // for CORE_WEBVIEW_TARGET_PRODUCT_VERSION
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <commdlg.h>
@@ -15,6 +14,7 @@ static const wchar_t* kViewerOrigin = L"https://" BSLVIEW_VIRTUAL_HOST L"/";
 
 static HRESULT BslCreateController(ICoreWebView2Environment* env, CWebView2Host* host);
 static void ConfigureControllerRendering(ICoreWebView2Controller* ctrl, HWND hwnd, bool dark);
+static void EnsureEnvironment();
 
 // Minimal ICoreWebView2EnvironmentOptions so we can pass browser flags without
 // pulling in WRL. The only one that matters is CalculateNativeWinOcclusion:
@@ -57,7 +57,17 @@ public:
     STDMETHODIMP put_Language(LPCWSTR) { return S_OK; }
 
     STDMETHODIMP get_TargetCompatibleBrowserVersion(LPWSTR* value) {
-        return CopyOut(CORE_WEBVIEW_TARGET_PRODUCT_VERSION, value);
+        /* The SDK constant (131.x) is a *minimum*. If the installed Evergreen
+         * runtime is older, CreateCoreWebView2Environment fails even though a
+         * runtime is present. Prefer the version that is actually installed. */
+        LPWSTR ver = NULL;
+        if (SUCCEEDED(GetAvailableCoreWebView2BrowserVersionString(NULL, &ver)) && ver && *ver) {
+            HRESULT hr = CopyOut(ver, value);
+            CoTaskMemFree(ver);
+            return hr;
+        }
+        if (ver) CoTaskMemFree(ver);
+        return CopyOut(L"86.0.616.0", value);
     }
     STDMETHODIMP put_TargetCompatibleBrowserVersion(LPCWSTR) { return S_OK; }
 
@@ -84,6 +94,8 @@ namespace {
 ICoreWebView2Environment* g_env = NULL;
 bool g_envPending = false;
 bool g_envFailed  = false;
+HRESULT g_lastEnvHr = S_OK;
+int g_envAttempts = 0;
 
 std::vector<CWebView2Host*>* g_waiters = NULL;
 
@@ -130,10 +142,19 @@ std::wstring UserDataFolder()
         base = tmp;
         if (!base.empty() && base.back() == L'\\') base.pop_back();
     }
-    // A stable location under LOCALAPPDATA (rather than TEMP) means the HTTP and
-    // code caches survive temp cleaners, so Monaco stays warm between sessions.
-    std::wstring dir = base + L"\\BSLView\\WebView2";
-    return dir;
+    // Isolate by host process so BSLEdit and the TC plugin do not fight over
+    // one Chromium profile (that fails with ERROR_INVALID_STATE).
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(NULL, exe, MAX_PATH);
+    const wchar_t* leaf = PathFindFileNameW(exe);
+    wchar_t name[MAX_PATH] = {};
+    lstrcpynW(name, leaf ? leaf : L"app", MAX_PATH);
+    PathRemoveExtensionW(name);
+    std::wstring folderName = name;
+    if (g_envAttempts > 1)
+        folderName += L"-" + std::to_wstring(GetCurrentProcessId());
+
+    return base + L"\\BSLView\\WebView2-" + folderName;
 }
 
 } // namespace
@@ -163,6 +184,14 @@ public:
             g_env = env;
             g_env->AddRef();
         } else {
+            g_lastEnvHr = FAILED(hr) ? hr : E_FAIL;
+            // First failure is often a user-data folder already taken by
+            // another BSLView process (TC plugin vs BSLEdit). Retry once
+            // with a process-id folder before giving up.
+            if (g_envAttempts < 2) {
+                EnsureEnvironment();
+                if (g_envPending || g_env) return S_OK;
+            }
             g_envFailed = true;
         }
 
@@ -175,10 +204,10 @@ public:
                     host->AddRef();   // held by the controller callback
                     if (FAILED(BslCreateController(g_env, host))) {
                         host->Release();
-                        PostMessageW(host->mParentWin, WM_BSLVIEW_WEBVIEW_FAILED, 0, 0);
+                        PostMessageW(host->mParentWin, WM_BSLVIEW_WEBVIEW_FAILED, (WPARAM)g_lastEnvHr, 0);
                     }
                 } else if (!host->mClosed) {
-                    PostMessageW(host->mParentWin, WM_BSLVIEW_WEBVIEW_FAILED, 0, 0);
+                    PostMessageW(host->mParentWin, WM_BSLVIEW_WEBVIEW_FAILED, (WPARAM)g_lastEnvHr, 0);
                 }
                 host->Release();      // the waiter-list reference
             }
@@ -368,9 +397,15 @@ bool CWebView2Host::IsRuntimeAvailable()
 
 static void EnsureEnvironment()
 {
-    if (g_env || g_envPending || g_envFailed) return;
-    if (!CWebView2Host::IsRuntimeAvailable()) { g_envFailed = true; return; }
+    if (g_env || g_envPending) return;
+    if (!CWebView2Host::IsRuntimeAvailable()) {
+        g_lastEnvHr = HRESULT_FROM_WIN32(ERROR_PRODUCT_UNINSTALLED);
+        g_envFailed = true;
+        return;
+    }
 
+    g_envFailed = false;
+    g_envAttempts++;
     std::wstring folder = UserDataFolder();
     SHCreateDirectoryExW(NULL, folder.c_str(), NULL);
 
@@ -384,8 +419,18 @@ static void EnsureEnvironment()
 
     if (FAILED(hr)) {
         g_envPending = false;
+        g_lastEnvHr = hr;
+        if (g_envAttempts < 2) {
+            EnsureEnvironment();
+            return;
+        }
         g_envFailed = true;
     }
+}
+
+HRESULT CWebView2Host::LastError()
+{
+    return g_lastEnvHr;
 }
 
 void CWebView2Host::WarmUp(const std::wstring& webRoot, bool keepWarm)
@@ -418,6 +463,8 @@ void CWebView2Host::Shutdown()
     if (g_holder) { DestroyWindow(g_holder); g_holder = NULL; }
     g_envPending = false;
     g_envFailed = false;
+    g_lastEnvHr = S_OK;
+    g_envAttempts = 0;
     g_keepWarm = false;
     g_warmWebRoot.clear();
 }
@@ -456,7 +503,7 @@ CWebView2Host* CWebView2Host::Acquire(HWND parent, const std::wstring& webRoot)
     EnsureEnvironment();
 
     if (g_envFailed) {
-        PostMessageW(parent, WM_BSLVIEW_WEBVIEW_FAILED, 0, 0);
+        PostMessageW(parent, WM_BSLVIEW_WEBVIEW_FAILED, (WPARAM)g_lastEnvHr, 0);
         return host;
     }
 
@@ -464,7 +511,7 @@ CWebView2Host* CWebView2Host::Acquire(HWND parent, const std::wstring& webRoot)
         host->AddRef();
         if (FAILED(BslCreateController(g_env, host))) {
             host->Release();
-            PostMessageW(parent, WM_BSLVIEW_WEBVIEW_FAILED, 0, 0);
+            PostMessageW(parent, WM_BSLVIEW_WEBVIEW_FAILED, (WPARAM)g_lastEnvHr, 0);
         }
         return host;
     }
@@ -623,7 +670,8 @@ void CWebView2Host::OnControllerCreated(HRESULT hr, ICoreWebView2Controller* ctr
     if (mClosed) return;
 
     if (FAILED(hr) || !ctrl) {
-        PostMessageW(mParentWin, WM_BSLVIEW_WEBVIEW_FAILED, 0, 0);
+        g_lastEnvHr = FAILED(hr) ? hr : E_FAIL;
+        PostMessageW(mParentWin, WM_BSLVIEW_WEBVIEW_FAILED, (WPARAM)g_lastEnvHr, 0);
         return;
     }
 
