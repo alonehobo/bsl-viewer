@@ -60,7 +60,33 @@ static std::wstring GetFileFromCmdLine()
     std::wstring result;
     if (argv && argc > 1) result = argv[1];
     if (argv) LocalFree(argv);
+    // Some launchers leave the quotes in argv[1]. CreateFile then looks for
+    // a name that does not exist and the Open-with dialog looks like a loop.
+    if (result.size() >= 2 && result.front() == L'"' && result.back() == L'"')
+        result = result.substr(1, result.size() - 2);
     return result;
+}
+
+static std::wstring GetHkcuDefaultSz(const wchar_t* subkey)
+{
+    HKEY hKey = NULL;
+    wchar_t buf[2048] = {};
+    DWORD sz = sizeof(buf);
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return std::wstring();
+    RegQueryValueExW(hKey, NULL, NULL, NULL, (BYTE*)buf, &sz);
+    RegCloseKey(hKey);
+    return buf;
+}
+
+static void SetHkcuDefaultSz(const wchar_t* subkey, const wchar_t* value)
+{
+    HKEY hKey = NULL;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, subkey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+        return;
+    RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)value,
+                   (DWORD)((wcslen(value) + 1) * sizeof(wchar_t)));
+    RegCloseKey(hKey);
 }
 
 static void RegisterFileAssociation()
@@ -68,42 +94,31 @@ static void RegisterFileAssociation()
     wchar_t exePath[MAX_PATH];
     if (!GetModuleFileNameW(NULL, exePath, MAX_PATH)) return;
 
-    HKEY hKey;
-    wchar_t existing[MAX_PATH] = {};
-    DWORD sz = sizeof(existing);
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\.bsl", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-        RegQueryValueExW(hKey, NULL, NULL, NULL, (BYTE*)existing, &sz);
-        RegCloseKey(hKey);
-        if (wcscmp(existing, L"BSLEdit.File") == 0) return;
-    }
+    std::wstring cmdVal = std::wstring(L"\"") + exePath + L"\" \"%1\"";
+    std::wstring iconVal = std::wstring(exePath) + L",0";
+
+    const wchar_t* cmdKey = L"Software\\Classes\\BSLEdit.File\\shell\\open\\command";
+    const wchar_t* iconKey = L"Software\\Classes\\BSLEdit.File\\DefaultIcon";
+    const wchar_t* appCmdKey = L"Software\\Classes\\Applications\\BSLEdit.exe\\shell\\open\\command";
+
+    // Re-write if the ProgId is missing *or* the exe moved. The previous early
+    // return on ProgId==BSLEdit.File left Explorer pointing at a stale path,
+    // which makes double-click loop the "Open with" dialog.
+    if (GetHkcuDefaultSz(L"Software\\Classes\\.bsl") == L"BSLEdit.File" &&
+        GetHkcuDefaultSz(cmdKey) == cmdVal &&
+        GetHkcuDefaultSz(appCmdKey) == cmdVal)
+        return;
 
     const wchar_t* exts[] = { L".bsl", L".os" };
     for (int i = 0; i < 2; i++) {
         std::wstring key = std::wstring(L"Software\\Classes\\") + exts[i];
-        if (RegCreateKeyExW(HKEY_CURRENT_USER, key.c_str(), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
-            continue;
-        const wchar_t* val = L"BSLEdit.File";
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)val, (DWORD)(wcslen(val) + 1) * 2);
-        RegCloseKey(hKey);
+        SetHkcuDefaultSz(key.c_str(), L"BSLEdit.File");
     }
 
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\BSLEdit.File", 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-        const wchar_t* desc = L"1C:Enterprise BSL Module";
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)desc, (DWORD)(wcslen(desc) + 1) * 2);
-        RegCloseKey(hKey);
-    }
-
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\BSLEdit.File\\DefaultIcon", 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-        std::wstring iconVal = std::wstring(exePath) + L",0";
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)iconVal.c_str(), (DWORD)(iconVal.size() + 1) * 2);
-        RegCloseKey(hKey);
-    }
-
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\BSLEdit.File\\shell\\open\\command", 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
-        std::wstring cmdVal = std::wstring(L"\"") + exePath + L"\" \"%1\"";
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)cmdVal.c_str(), (DWORD)(cmdVal.size() + 1) * 2);
-        RegCloseKey(hKey);
-    }
+    SetHkcuDefaultSz(L"Software\\Classes\\BSLEdit.File", L"1C:Enterprise BSL Module");
+    SetHkcuDefaultSz(iconKey, iconVal.c_str());
+    SetHkcuDefaultSz(cmdKey, cmdVal.c_str());
+    SetHkcuDefaultSz(appCmdKey, cmdVal.c_str());
 
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
 }

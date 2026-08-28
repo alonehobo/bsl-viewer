@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"
+                xmlns:app="http://v8.1c.ru/8.2/managed-application"
+                version="2.17">
+  <!-- Модуль документа ЗаказКлиента -->
+  <Document uuid="a1b2c3d4-e5f6-7890-abcd-ef1234567890">
+    <Properties>
+      <Name>ЗаказКлиента</Name>
+      <Synonym>
+        <v8:item xmlns:v8="http://v8.1c.ru/8.1/data/core">
+          <v8:lang>ru</v8:lang>
+          <v8:content>Заказ клиента</v8:content>
+        </v8:item>
+      </Synonym>
+      <Comment>Основной документ продажи</Comment>
+      <Posting>Allow</Posting>
+      <NumberType>String</NumberType>
+      <NumberLength>11</NumberLength>
+    </Properties>
+    <ChildObjects>
+      <Attribute uuid="11111111-2222-3333-4444-555555555555">
+        <Properties>
+          <Name>Контрагент</Name>
+          <Type>
+            <v8:Type>cfg:CatalogRef.Контрагенты</v8:Type>
+          </Type>
+        </Properties>
+      </Attribute>
+    </ChildObjects>
+  </Document>
+</MetaDataObject>

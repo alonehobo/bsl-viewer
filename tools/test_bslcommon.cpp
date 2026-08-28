@@ -144,6 +144,7 @@ int main()
         Check(!strcmp(MonacoLanguageForPath(L"query.sdbl"), "bsl"), ".sdbl -> bsl");
         Check(!strcmp(MonacoLanguageForPath(L"readme.md"), "markdown"), ".md -> markdown");
         Check(!strcmp(MonacoLanguageForPath(L"data.json"), "json"), ".json -> json");
+        Check(!strcmp(MonacoLanguageForPath(L"meta.XML"), "xml"), ".xml is case-insensitive");
         Check(!strcmp(MonacoLanguageForPath(L"noext"), "plaintext"), "no extension -> plaintext");
         Check(!strcmp(MonacoLanguageForPath(L"weird.zzz"), "plaintext"), "unknown -> plaintext");
     }

@@ -158,12 +158,17 @@ function defineBsl(monaco) {
             { token: 'string', foreground: '000000' },
             { token: 'string.quote', foreground: '000000' },
             { token: 'string.escape', foreground: '000000' },
+            { token: 'string.key', foreground: '0000ff' },
             { token: 'number', foreground: '000000' },
             { token: 'number.float', foreground: '000000' },
             { token: 'date', foreground: '000000' },
             { token: 'preproc', foreground: '963200' },
             { token: 'compile', foreground: '963200' },
-            { token: 'gotomark', foreground: '3a3a3a' }
+            { token: 'gotomark', foreground: '3a3a3a' },
+            { token: 'tag', foreground: 'ff0000' },
+            { token: 'metatag', foreground: '963200' },
+            { token: 'attribute.name', foreground: '0000ff' },
+            { token: 'attribute.value', foreground: '000000' }
         ],
         colors: {
             'editor.background': '#FFFFFF',
@@ -194,12 +199,17 @@ function defineBsl(monaco) {
             { token: 'string', foreground: 'c3602c' },
             { token: 'string.quote', foreground: 'c3602c' },
             { token: 'string.escape', foreground: 'c3602c' },
+            { token: 'string.key', foreground: '9cdcfe' },
             { token: 'number', foreground: 'b5cea8' },
             { token: 'number.float', foreground: 'b5cea8' },
             { token: 'date', foreground: 'b5cea8' },
             { token: 'preproc', foreground: 'ce9178' },
             { token: 'compile', foreground: 'ce9178' },
-            { token: 'gotomark', foreground: 'ff9000' }
+            { token: 'gotomark', foreground: 'ff9000' },
+            { token: 'tag', foreground: '569cd6' },
+            { token: 'metatag', foreground: 'c586c0' },
+            { token: 'attribute.name', foreground: '9cdcfe' },
+            { token: 'attribute.value', foreground: 'c3602c' }
         ],
         colors: {
             'editor.background': '#1E1E1E',
@@ -234,6 +244,111 @@ function defineBsl(monaco) {
             }
             return syms;
         }
+    });
+
+    defineJsonXml(monaco);
+}
+
+/* JSON/XML: register monarch tokenisers up front. Monaco's jsonMode loads
+ * asynchronously (and may later replace JSON tokens); XML is lazy-loaded
+ * from basic-languages. Without our own providers the first paint is
+ * plaintext, and bsl-light/bsl-dark (inherit:false) had no colours for
+ * tag / attribute / string.key anyway. */
+function defineJsonXml(monaco) {
+    monaco.languages.setMonarchTokensProvider('json', {
+        tokenPostfix: '.json',
+        defaultToken: '',
+        tokenizer: {
+            root: [
+                { include: '@whitespace' },
+                [/[{}]/, 'delimiter.bracket'],
+                [/[\[\]]/, 'delimiter.array'],
+                [/[,:]/, 'delimiter'],
+                [/"([^"\\]|\\.)*"(?=\s*:)/, 'string.key'],
+                [/"([^"\\]|\\.)*$/, 'string.invalid'],
+                [/"/, { token: 'string.quote', next: '@string' }],
+                [/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/, 'number'],
+                [/true|false|null/, 'keyword']
+            ],
+            string: [
+                [/[^\\"']+/, 'string'],
+                [/\\./, 'string.escape'],
+                [/"/, { token: 'string.quote', next: '@pop' }]
+            ],
+            whitespace: [
+                [/[ \t\r\n]+/, ''],
+                [/\/\*/, { token: 'comment', next: '@comment' }],
+                [/\/\/.*$/, 'comment']
+            ],
+            comment: [
+                [/[^*]+/, 'comment'],
+                [/\*\//, { token: 'comment', next: '@pop' }],
+                [/./, 'comment']
+            ]
+        }
+    });
+    monaco.languages.setLanguageConfiguration('json', {
+        comments: { lineComment: '//', blockComment: ['/*', '*/'] },
+        brackets: [['{', '}'], ['[', ']']],
+        autoClosingPairs: [
+            { open: '{', close: '}' },
+            { open: '[', close: ']' },
+            { open: '"', close: '"' }
+        ]
+    });
+
+    monaco.languages.setMonarchTokensProvider('xml', {
+        defaultToken: '',
+        tokenPostfix: '.xml',
+        ignoreCase: true,
+        qualifiedName: /(?:[\w.\-]+:)?[\w.\-]+/,
+        tokenizer: {
+            root: [
+                [/[^<&]+/, ''],
+                { include: '@whitespace' },
+                [/(<\?)(@qualifiedName)/, [{ token: 'delimiter' }, { token: 'metatag', next: '@tag' }]],
+                [/<!\[CDATA\[/, { token: 'delimiter.cdata', next: '@cdata' }],
+                [/(<\!)(@qualifiedName)/, [{ token: 'delimiter' }, { token: 'metatag', next: '@tag' }]],
+                [/(<\/)(@qualifiedName)(\s*)(>)/, [
+                    { token: 'delimiter' }, { token: 'tag' }, '', { token: 'delimiter' }
+                ]],
+                [/(<)(@qualifiedName)/, [{ token: 'delimiter' }, { token: 'tag', next: '@tag' }]],
+                [/&\w+;/, 'string.escape']
+            ],
+            cdata: [
+                [/[^\]]+/, ''],
+                [/\]\]>/, { token: 'delimiter.cdata', next: '@pop' }],
+                [/\]/, '']
+            ],
+            tag: [
+                [/[ \t\r\n]+/, ''],
+                [/(@qualifiedName)(\s*=\s*)("[^"]*"|'[^']*')/, [
+                    'attribute.name', '', 'attribute.value'
+                ]],
+                [/@qualifiedName/, 'attribute.name'],
+                [/\?>/, { token: 'delimiter', next: '@pop' }],
+                [/(\/)(>)/, [{ token: 'tag' }, { token: 'delimiter', next: '@pop' }]],
+                [/>/, { token: 'delimiter', next: '@pop' }]
+            ],
+            whitespace: [
+                [/[ \t\r\n]+/, ''],
+                [/<!--/, { token: 'comment', next: '@comment' }]
+            ],
+            comment: [
+                [/-->/, { token: 'comment', next: '@pop' }],
+                [/[^-]+/, 'comment.content'],
+                [/./, 'comment.content']
+            ]
+        }
+    });
+    monaco.languages.setLanguageConfiguration('xml', {
+        comments: { blockComment: ['<!--', '-->'] },
+        brackets: [['<', '>']],
+        autoClosingPairs: [
+            { open: '<', close: '>' },
+            { open: '"', close: '"' },
+            { open: "'", close: "'" }
+        ]
     });
 }
 
