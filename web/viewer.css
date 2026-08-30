@@ -98,10 +98,33 @@ html.theme-dark #statusbar { background:#252526; color:#ccc; border-top-color:#3
 #sb-sel:empty { display:none; }
 #sb-lines { margin-left:auto; }
 
+#save-prompt {
+    position:absolute; inset:0; z-index:50;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,0.4);
+}
+#save-prompt[hidden] { display:none !important; }
+.save-prompt-box {
+    background:#fff; color:#222; padding:18px 22px; border-radius:6px;
+    min-width:280px; max-width:90%;
+    box-shadow:0 8px 32px rgba(0,0,0,0.3);
+    font-size:14px;
+}
+html.theme-dark .save-prompt-box { background:#252526; color:#ddd; }
+.save-prompt-msg { margin-bottom:16px; }
+.save-prompt-btns { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
+.save-prompt-btns button {
+    height:28px; padding:0 12px; border:1px solid #ccc; border-radius:3px;
+    background:#f4f4f4; color:#222; cursor:pointer; font-size:12px;
+}
+html.theme-dark .save-prompt-btns button { background:#3c3c3c; color:#ddd; border-color:#555; }
+.save-prompt-btns button:hover { border-color:#0078d4; }
+.save-prompt-yes { background:#0078d4 !important; color:#fff !important; border-color:#0078d4 !important; }
+
 #print-root { display:none; }
 @media print {
     html, body { width:auto; height:auto; overflow:visible; background:#fff; color:#000; }
-    #main, #editor, #preview, #preview-handle, #toolbar, #outline-panel, #outline-toggle, #statusbar { display:none !important; }
+    #main, #editor, #preview, #preview-handle, #toolbar, #outline-panel, #outline-toggle, #statusbar, #save-prompt { display:none !important; }
     #print-root { display:block !important; width:100%; }
     #print-root pre { white-space:pre-wrap; word-wrap:break-word; font-family:Consolas,'Courier New',monospace; font-size:11pt; margin:0; color:#000; }
     #print-root .md-body { font-family:'Segoe UI',Arial,sans-serif; font-size:11pt; color:#000; max-width:100%; }

@@ -901,6 +901,24 @@ void CWebView2Host::OnWebMessage(const std::wstring& msg)
         return;
     }
 
+    if (JsonFieldEquals(msg, L"cmd", L"reload")) {
+        if (mFilePath.empty()) {
+            PostJson(L"{\"cmd\":\"reverted\",\"ok\":false}");
+            return;
+        }
+        TextFile file = ReadTextFile(mFilePath.c_str(), 0);
+        if (!file.ok) {
+            PostJson(L"{\"cmd\":\"reverted\",\"ok\":false}");
+            return;
+        }
+        mEncoding = file.encoding;
+        std::wstring json = L"{\"cmd\":\"reverted\",\"ok\":true,\"content\":\"";
+        json += JsonEscape(file.text);
+        json += L"\"}";
+        PostJson(json);
+        return;
+    }
+
     if (JsonFieldEquals(msg, L"cmd", L"pdf")) {
         ExportPdf();
         return;

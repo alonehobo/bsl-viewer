@@ -38,6 +38,9 @@ var state = {
     dirty: false
 };
 var allItems = [];
+var baselineContent = '';
+var suppressDirty = false;
+var pendingLeaveEdit = false;
 
 // ---------------------------------------------------------------- host I/O
 
@@ -64,6 +67,7 @@ function onHostMessage(ev) {
             break;
         case 'park':    parkEditor(); break;
         case 'saved':   onSaveResult(d.ok); break;
+        case 'reverted': onReverted(d); break;
         case 'pdfDone': clearPrintContent(); break;
     }
 }
@@ -396,6 +400,9 @@ function applyLoad(req) {
     state.isEditing = !state.readOnly;
     state.previewMode = false;
     state.dirty = false;
+    baselineContent = content;
+    pendingLeaveEdit = false;
+    hideSavePrompt();
 
     var big = content.length > BIG_FILE_CHARS;
     var old = model;
@@ -407,9 +414,9 @@ function applyLoad(req) {
     if (old) old.dispose();
 
     model.onDidChangeContent(function () {
-        state.dirty = true;
+        if (!suppressDirty) state.dirty = true;
         updateStatusBar();
-        if (!applyingFromPreview) schedulePreviewRefresh();
+        if (!applyingFromPreview && !suppressDirty) schedulePreviewRefresh();
     });
 
     // A reused instance may still be showing the previous file's UI state.
@@ -505,6 +512,9 @@ function parkEditor() {
     if (old) old.dispose();
     allItems = [];
     state.dirty = false;
+    baselineContent = '';
+    pendingLeaveEdit = false;
+    hideSavePrompt();
     if (state.previewMode) setPreviewMode(false);
     renderOutline();
     updateStatusBar();
@@ -577,7 +587,10 @@ function updateStatusBar() {
 
 function wireStatusBar() {
     editor.onDidChangeCursorPosition(updateStatusBar);
-    editor.onDidChangeCursorSelection(updateStatusBar);
+    editor.onDidChangeCursorSelection(function () {
+        updateStatusBar();
+        syncHighlightFromEditor();
+    });
     updateStatusBar();
 }
 
@@ -703,8 +716,16 @@ function applyChrome() {
     document.getElementById('btn-preview').style.display = canPreview ? '' : 'none';
 }
 
-function toggleEdit() {
-    state.isEditing = !state.isEditing;
+function flushPreviewEdits() {
+    if (previewInputTimer) {
+        clearTimeout(previewInputTimer);
+        previewInputTimer = null;
+        writeSourceFromPreview();
+    }
+}
+
+function setEditing(on) {
+    state.isEditing = !!on;
     editor.updateOptions({ readOnly: !state.isEditing });
     applyChrome();
     applyPreviewEditable();
@@ -712,12 +733,106 @@ function toggleEdit() {
     else editor.focus();
 }
 
+function hideSavePrompt() {
+    var el = document.getElementById('save-prompt');
+    if (el) el.hidden = true;
+}
+
+function showSavePrompt() {
+    var el = document.getElementById('save-prompt');
+    if (!el) return;
+    el.hidden = false;
+    var yes = document.getElementById('save-prompt-yes');
+    if (yes) yes.focus();
+}
+
+function applyRevert(content) {
+    if (!model) return;
+    var scroll = editor ? editor.getScrollTop() : 0;
+    var pos = editor ? editor.getPosition() : null;
+    suppressDirty = true;
+    applyingFromPreview = true;
+    model.setValue(content || '');
+    applyingFromPreview = false;
+    suppressDirty = false;
+    state.dirty = false;
+    baselineContent = model.getValue();
+    if (editor) {
+        editor.setScrollTop(scroll);
+        if (pos) editor.setPosition(pos);
+    }
+    if (state.previewMode) {
+        refreshPreviewContent();
+        applyPreviewEditable();
+        syncPreviewFromEditor();
+        if (typeof syncHighlightFromEditor === 'function') syncHighlightFromEditor();
+    }
+    if (state.language === 'bsl') { parseOutline(); renderOutline(); }
+    updateStatusBar();
+}
+
+function revertUnsaved() {
+    applyRevert(baselineContent);
+    setEditing(false);
+    if (host) send({ cmd: 'reload' });
+}
+
+function savePromptOpen() {
+    var el = document.getElementById('save-prompt');
+    return !!(el && !el.hidden);
+}
+
+function toggleEdit() {
+    if (pendingLeaveEdit || savePromptOpen()) return;
+    if (state.isEditing) {
+        flushPreviewEdits();
+        if (state.dirty) {
+            showSavePrompt();
+            return;
+        }
+        setEditing(false);
+    } else {
+        setEditing(true);
+    }
+}
+
+function onSavePromptYes() {
+    hideSavePrompt();
+    pendingLeaveEdit = true;
+    saveFile();
+}
+
+function onSavePromptNo() {
+    hideSavePrompt();
+    revertUnsaved();
+}
+
+function onSavePromptCancel() {
+    hideSavePrompt();
+    pendingLeaveEdit = false;
+    if (editor) editor.focus();
+}
+
+function onReverted(d) {
+    if (d && d.ok && typeof d.content === 'string') applyRevert(d.content);
+    pendingLeaveEdit = false;
+}
+
 function onSaveResult(ok) {
     var btnSave = document.getElementById('btn-save');
     btnSave.classList.remove('save-ok', 'save-err');
     btnSave.classList.add(ok ? 'save-ok' : 'save-err');
     btnSave.innerHTML = ok ? '&#10004; Сохранено' : '&#10006; Ошибка';
-    if (ok) state.dirty = false;
+    if (ok) {
+        state.dirty = false;
+        if (model) baselineContent = model.getValue();
+        if (pendingLeaveEdit) {
+            pendingLeaveEdit = false;
+            setEditing(false);
+        }
+    } else {
+        pendingLeaveEdit = false;
+    }
     setTimeout(function () {
         btnSave.classList.remove('save-ok', 'save-err');
         btnSave.innerHTML = '&#128190; Сохранить';
@@ -727,6 +842,7 @@ function onSaveResult(ok) {
 
 function saveFile() {
     if (!state.isEditing || !model) return;
+    flushPreviewEdits();
     send({ cmd: 'save', content: model.getValue() });
 }
 
@@ -761,6 +877,8 @@ var previewSyncLock = 0;     // 1 = driven by editor, 2 = driven by preview
 var previewScrollWired = false;
 var applyingFromPreview = false;
 var previewInputTimer = null;
+var highlightSyncLock = 0;   // 1 = driven by editor, 2 = driven by preview
+var revealHlTimer = null;
 
 function loadScriptNoAmd(url) {
     return new Promise(function (resolve) {
@@ -800,6 +918,13 @@ function countNewlines(s) {
     return n;
 }
 
+function tokenEndLine(start, raw) {
+    if (!raw) return start;
+    var n = countNewlines(raw);
+    if (!n) return start;
+    return (raw.charCodeAt(raw.length - 1) === 10) ? start + n - 1 : start + n;
+}
+
 function renderMarkdown(src) {
     try {
         if (window.marked) {
@@ -811,11 +936,13 @@ function renderMarkdown(src) {
                 for (var i = 0; i < tokens.length; i++) {
                     var t = tokens[i];
                     var start = line;
+                    var end = tokenEndLine(start, t.raw);
                     if (t.raw) line += countNewlines(t.raw);
                     if (t.type === 'space' || t.type === 'def') continue;
                     var one = [t];
                     if (tokens.links) one.links = tokens.links;
-                    html.push('<div class="md-block" data-line="' + start + '">' + marked.parser(one) + '</div>');
+                    html.push('<div class="md-block" data-line="' + start + '" data-end="' + end + '">'
+                        + marked.parser(one) + '</div>');
                 }
                 return html.join('');
             }
@@ -827,10 +954,21 @@ function renderMarkdown(src) {
 
 function previewCss() {
     var dk = state.isDark;
-    return 'html,body{margin:0;padding:0;background:'
-         + (dk ? '#1e1e1e' : '#ffffff') + ';color:' + (dk ? '#d4d4d4' : '#24292e') + '}'
-         + 'body{font-family:Segoe UI,Arial,sans-serif;line-height:1.6;padding:16px 22px 48px;}'
+    return 'html{position:relative;margin:0;padding:0;background:'
+         + (dk ? '#1e1e1e' : '#ffffff') + '}'
+         + 'body{margin:0;padding:16px 22px 48px;background:'
+         + (dk ? '#1e1e1e' : '#ffffff') + ';color:' + (dk ? '#d4d4d4' : '#24292e') + ';'
+         + 'font-family:Segoe UI,Arial,sans-serif;line-height:1.6}'
          + '.md-block{scroll-margin-top:8px}'
+         + '.md-block.md-hl-line{background:' + (dk ? 'rgba(55,148,255,0.12)' : 'rgba(0,120,212,0.10)') + ';border-radius:4px}'
+         + '.md-block.md-hl-sel{background:' + (dk ? 'rgba(38,79,120,0.42)' : 'rgba(255,232,119,0.50)') + ';border-radius:4px}'
+         + '#md-sync-hl{position:absolute;left:0;right:0;pointer-events:none;z-index:5;box-sizing:border-box;'
+         + 'border-left:3px solid ' + (dk ? '#3794ff' : '#0078d4') + ';'
+         + 'background:' + (dk ? 'rgba(55,148,255,0.14)' : 'rgba(0,120,212,0.12)') + '}'
+         + '#md-sync-hl.md-sync-sel{border-left-color:' + (dk ? '#4fc1ff' : '#c9a227') + ';'
+         + 'background:' + (dk ? 'rgba(38,79,120,0.48)' : 'rgba(255,232,119,0.42)') + '}'
+         + '::selection{background:' + (dk ? '#264F78' : '#ffe877') + '}'
+         + '::highlight(md-sel){background:' + (dk ? 'rgba(38,79,120,0.85)' : 'rgba(255,232,119,0.9)') + '}'
          + '[contenteditable="true"]{outline:none;caret-color:' + (dk ? '#d4d4d4' : '#24292e') + ';min-height:70vh;cursor:text}'
          + '[contenteditable="true"]:focus{box-shadow:none}'
          + 'pre{background:' + (dk ? '#2d2d2d' : '#f6f8fa') + ';padding:12px;border-radius:4px;overflow:auto;max-width:100%}'
@@ -878,6 +1016,7 @@ function schedulePreviewRefresh() {
         refreshPreviewContent();
         applyPreviewEditable();
         syncPreviewFromEditor();
+        syncHighlightFromEditor();
     }, 120);
 }
 
@@ -1070,6 +1209,366 @@ function onPreviewScroll() {
     syncEditorFromPreview();
 }
 
+function mdPreviewOn() {
+    return !!(state.previewMode && state.language === 'markdown' && editor && model);
+}
+
+function clampLine(n) {
+    var last = model.getLineCount();
+    n = Math.round(n);
+    if (n < 1) return 1;
+    if (n > last) return last;
+    return n;
+}
+
+function posToLineFrac(pos) {
+    var maxCol = model.getLineMaxColumn(pos.lineNumber);
+    var len = Math.max(1, maxCol - 1);
+    var col = pos.column - 1;
+    if (col < 0) col = 0;
+    if (col > len) col = len;
+    return pos.lineNumber + col / len;
+}
+
+function editorSelSpan() {
+    var sel = editor.getSelection();
+    if (!sel) {
+        var p = editor.getPosition();
+        var ln = p ? p.lineNumber : 1;
+        return { startLine: ln, endLine: ln, yStart: ln, yEnd: ln + 1, isSel: false };
+    }
+    var a = sel.getStartPosition();
+    var b = sel.getEndPosition();
+    if (sel.isEmpty()) {
+        return { startLine: a.lineNumber, endLine: a.lineNumber, yStart: a.lineNumber, yEnd: a.lineNumber + 1, isSel: false };
+    }
+    var endLine = b.lineNumber;
+    if (b.column === 1 && endLine > a.lineNumber) endLine--;
+    return {
+        startLine: a.lineNumber,
+        endLine: endLine,
+        yStart: posToLineFrac(a),
+        yEnd: posToLineFrac(b),
+        isSel: true
+    };
+}
+
+function mdBlockLineRange(el, nextEl, lastLine) {
+    var start = parseInt(el.getAttribute('data-line'), 10) || 1;
+    var endAttr = el.getAttribute('data-end');
+    var end;
+    if (endAttr) end = parseInt(endAttr, 10);
+    else if (nextEl) end = (parseInt(nextEl.getAttribute('data-line'), 10) || start) - 1;
+    else end = lastLine || start;
+    if (!(end >= start)) end = start;
+    return { start: start, end: end };
+}
+
+function closestMdBlock(node) {
+    while (node && node.nodeType !== 1) node = node.parentNode;
+    if (!node || !node.closest) return null;
+    return node.closest('.md-block');
+}
+
+function previewAnchorBoxes(win) {
+    var doc = win.document;
+    var els = doc.querySelectorAll('.md-block[data-line]');
+    var a = [];
+    for (var i = 0; i < els.length; i++) {
+        var line = parseInt(els[i].getAttribute('data-line'), 10);
+        if (!line) continue;
+        var r = els[i].getBoundingClientRect();
+        a.push({
+            line: line,
+            top: r.top + win.pageYOffset,
+            bottom: r.bottom + win.pageYOffset
+        });
+    }
+    return a;
+}
+
+function mapLineToPreviewDocY(lineFrac, boxes, lastLine) {
+    if (!boxes.length) return null;
+    if (lineFrac <= boxes[0].line) return boxes[0].top;
+    for (var i = 0; i < boxes.length - 1; i++) {
+        if (lineFrac < boxes[i + 1].line) {
+            var span = boxes[i + 1].line - boxes[i].line;
+            var t = span ? (lineFrac - boxes[i].line) / span : 0;
+            return boxes[i].top + t * (boxes[i + 1].top - boxes[i].top);
+        }
+    }
+    var last = boxes[boxes.length - 1];
+    var spanEnd = Math.max(1, lastLine + 1 - last.line);
+    var tEnd = (lineFrac - last.line) / spanEnd;
+    if (tEnd < 0) tEnd = 0;
+    if (tEnd > 1) tEnd = 1;
+    return last.top + tEnd * Math.max(0, last.bottom - last.top);
+}
+
+function mapPreviewDocYToLine(y, boxes, lastLine) {
+    if (!boxes.length) return null;
+    if (y <= boxes[0].top) return boxes[0].line;
+    for (var i = 0; i < boxes.length - 1; i++) {
+        if (y < boxes[i + 1].top) {
+            var spanY = boxes[i + 1].top - boxes[i].top;
+            var t = spanY ? (y - boxes[i].top) / spanY : 0;
+            return boxes[i].line + t * (boxes[i + 1].line - boxes[i].line);
+        }
+    }
+    var last = boxes[boxes.length - 1];
+    var spanY = Math.max(1, last.bottom - last.top);
+    var tEnd = (y - last.top) / spanY;
+    if (tEnd < 0) tEnd = 0;
+    if (tEnd > 1) tEnd = 1;
+    return last.line + tEnd * Math.max(0, lastLine + 1 - last.line);
+}
+
+function ensurePreviewOverlay(doc) {
+    var el = doc.getElementById('md-sync-hl');
+    if (el) return el;
+    el = doc.createElement('div');
+    el.id = 'md-sync-hl';
+    doc.documentElement.appendChild(el);
+    return el;
+}
+
+function clearPreviewBlockHl(doc) {
+    var els = doc.querySelectorAll('.md-block.md-hl-line,.md-block.md-hl-sel');
+    for (var i = 0; i < els.length; i++) els[i].classList.remove('md-hl-line', 'md-hl-sel');
+}
+
+function applyPreviewBlockHl(doc, startLine, endLine, isSel) {
+    var els = doc.querySelectorAll('.md-block[data-line]');
+    var lastLine = model.getLineCount();
+    var cls = isSel ? 'md-hl-sel' : 'md-hl-line';
+    for (var i = 0; i < els.length; i++) {
+        var range = mdBlockLineRange(els[i], els[i + 1], lastLine);
+        if (range.start <= endLine && range.end >= startLine) els[i].classList.add(cls);
+    }
+}
+
+function stripMdLight(s) {
+    return String(s || '')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+        .replace(/^\s*[-*+]\s+/gm, '')
+        .replace(/^\s*\d+\.\s+/gm, '')
+        .replace(/^\s*>\s?/gm, '')
+        .replace(/[*_~]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function findTextRangeInRoot(doc, root, needle) {
+    if (!root || !needle) return null;
+    var walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    var parts = [], acc = '', node;
+    while ((node = walker.nextNode())) {
+        parts.push({ node: node, start: acc.length });
+        acc += node.nodeValue;
+    }
+    if (!parts.length) return null;
+    var idx = acc.indexOf(needle);
+    if (idx < 0) return null;
+    var endIdx = idx + needle.length;
+    function at(off) {
+        for (var i = 0; i < parts.length; i++) {
+            var len = parts[i].node.nodeValue.length;
+            var next = parts[i].start + len;
+            if (off < next || i === parts.length - 1)
+                return { node: parts[i].node, offset: Math.max(0, Math.min(len, off - parts[i].start)) };
+        }
+        var last = parts[parts.length - 1];
+        return { node: last.node, offset: last.node.nodeValue.length };
+    }
+    var a = at(idx);
+    var b = at(endIdx);
+    var range = doc.createRange();
+    try {
+        range.setStart(a.node, a.offset);
+        range.setEnd(b.node, b.offset);
+    } catch (e) { return null; }
+    return range;
+}
+
+function applyPreviewTextHighlight(win, doc, span) {
+    if (!win.CSS || !win.CSS.highlights || typeof win.Highlight !== 'function') return;
+    try { win.CSS.highlights.delete('md-sel'); } catch (e) { /* ignore */ }
+    if (!span.isSel) return;
+    var raw = model.getValueInRange(editor.getSelection());
+    var needle = stripMdLight(raw);
+    if (needle.length < 2) return;
+    var root = doc.getElementById('md-root') || doc.body;
+    var range = findTextRangeInRoot(doc, root, needle);
+    if (!range && raw.indexOf('\n') >= 0)
+        range = findTextRangeInRoot(doc, root, stripMdLight(raw.split('\n')[0]));
+    if (!range) return;
+    try { win.CSS.highlights.set('md-sel', new win.Highlight(range)); } catch (e) { /* ignore */ }
+}
+
+function revealPreviewRange(win, y1, y2) {
+    var viewTop = win.pageYOffset;
+    var viewH = win.innerHeight;
+    var viewBot = viewTop + viewH;
+    if (y1 >= viewTop + 8 && y2 <= viewBot - 8) return;
+    previewSyncLock = 1;
+    var pad = 16;
+    if (y2 - y1 >= viewH) win.scrollTo(0, Math.max(0, y1 - pad));
+    else if (y1 < viewTop) win.scrollTo(0, Math.max(0, y1 - pad));
+    else win.scrollTo(0, Math.max(0, y2 - viewH + pad));
+    requestAnimationFrame(function () { if (previewSyncLock === 1) previewSyncLock = 0; });
+}
+
+function coveringBox(boxes, line, lastLine) {
+    for (var i = 0; i < boxes.length; i++) {
+        var end = (i + 1 < boxes.length) ? boxes[i + 1].line : lastLine + 1;
+        if (line >= boxes[i].line && line < end) return boxes[i];
+    }
+    return boxes.length ? boxes[boxes.length - 1] : null;
+}
+
+function syncHighlightFromEditor() {
+    if (!mdPreviewOn()) return;
+    var win = previewWin();
+    var doc = win && win.document;
+    if (!doc) return;
+    var span = editorSelSpan();
+    var overlay = ensurePreviewOverlay(doc);
+    var boxes = previewAnchorBoxes(win);
+    var lastLine = model.getLineCount();
+    var y1 = mapLineToPreviewDocY(span.yStart, boxes, lastLine);
+    var y2 = mapLineToPreviewDocY(span.yEnd, boxes, lastLine);
+    if (!span.isSel) {
+        var box = coveringBox(boxes, span.startLine, lastLine);
+        if (box) { y1 = box.top; y2 = box.bottom; }
+    }
+    if (y1 == null || y2 == null) {
+        overlay.style.display = 'none';
+        clearPreviewBlockHl(doc);
+        return;
+    }
+    if (y2 < y1) { var tmp = y1; y1 = y2; y2 = tmp; }
+    var h = y2 - y1;
+    if (h < 10) h = 10;
+    overlay.style.display = 'block';
+    overlay.style.top = y1 + 'px';
+    overlay.style.height = h + 'px';
+    overlay.className = span.isSel ? 'md-sync-sel' : '';
+    overlay.id = 'md-sync-hl';
+    clearPreviewBlockHl(doc);
+    applyPreviewBlockHl(doc, span.startLine, span.endLine, span.isSel);
+    applyPreviewTextHighlight(win, doc, span);
+    if (highlightSyncLock === 2) return;
+    if (revealHlTimer) clearTimeout(revealHlTimer);
+    revealHlTimer = setTimeout(function () {
+        revealHlTimer = null;
+        if (!mdPreviewOn() || highlightSyncLock === 2) return;
+        var w = previewWin();
+        if (w) revealPreviewRange(w, y1, y2);
+    }, 0);
+}
+
+function pickMatchNear(text, fromLine, toLine) {
+    if (!text || text.length < 2 || text.length > 800 || !model.findMatches) return null;
+    var matches = model.findMatches(text, true, false, false, null, false, 24);
+    if (!matches || !matches.length) return null;
+    var best = null, bestDist = 1e9;
+    for (var i = 0; i < matches.length; i++) {
+        var ln = matches[i].range.startLineNumber;
+        if (ln >= fromLine && ln <= toLine) return matches[i].range;
+        var dist = ln < fromLine ? fromLine - ln : ln - toLine;
+        if (dist < bestDist) { bestDist = dist; best = matches[i].range; }
+    }
+    return (best && bestDist <= 12) ? best : null;
+}
+
+function previewSelectionInfo(win) {
+    var doc = win.document;
+    var sel = doc.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    var range = sel.getRangeAt(0);
+    var info = {
+        collapsed: sel.isCollapsed,
+        text: (sel.toString() || '').replace(/\s+/g, ' ').trim(),
+        startLine: 0,
+        endLine: 0,
+        yTop: null,
+        yBot: null
+    };
+    var rects = range.getClientRects();
+    if (rects && rects.length) {
+        info.yTop = rects[0].top + win.pageYOffset;
+        info.yBot = rects[rects.length - 1].bottom + win.pageYOffset;
+    } else {
+        var br = range.getBoundingClientRect();
+        if (br && (br.height || br.width || br.top)) {
+            info.yTop = br.top + win.pageYOffset;
+            info.yBot = br.bottom + win.pageYOffset;
+        }
+    }
+    var startBlock = closestMdBlock(range.startContainer);
+    var endBlock = closestMdBlock(range.endContainer);
+    var lastLine = model.getLineCount();
+    if (startBlock) {
+        var sr = mdBlockLineRange(startBlock, startBlock.nextElementSibling, lastLine);
+        info.startLine = sr.start;
+    }
+    if (endBlock) {
+        var er = mdBlockLineRange(endBlock, endBlock.nextElementSibling, lastLine);
+        info.endLine = er.end;
+    } else if (startBlock) {
+        info.endLine = info.startLine;
+    }
+    return info;
+}
+
+function syncEditorFromPreviewSelection() {
+    if (!mdPreviewOn() || highlightSyncLock === 1 || applyingFromPreview) return;
+    var win = previewWin();
+    if (!win || !win.document) return;
+    var info = previewSelectionInfo(win);
+    if (!info) return;
+    if (!info.startLine && info.yTop == null) return;
+    var boxes = previewAnchorBoxes(win);
+    var lastLine = model.getLineCount();
+    var startLine = info.startLine || 1;
+    var endLine = info.endLine || startLine;
+    if (info.yTop != null && boxes.length) {
+        startLine = clampLine(mapPreviewDocYToLine(info.yTop, boxes, lastLine));
+        endLine = clampLine(mapPreviewDocYToLine(info.yBot != null ? info.yBot : info.yTop, boxes, lastLine));
+    }
+    if (endLine < startLine) { var t = startLine; startLine = endLine; endLine = t; }
+
+    highlightSyncLock = 2;
+    previewSyncLock = 2;
+    var match = (!info.collapsed && info.text) ? pickMatchNear(info.text, startLine, endLine) : null;
+    if (match) {
+        editor.setSelection(match);
+        editor.revealRangeInCenterIfOutsideViewport(match);
+    } else if (info.collapsed) {
+        editor.setPosition({ lineNumber: startLine, column: 1 });
+        editor.revealLineInCenterIfOutsideViewport(startLine);
+    } else {
+        editor.setSelection({
+            startLineNumber: startLine,
+            startColumn: 1,
+            endLineNumber: endLine,
+            endColumn: model.getLineMaxColumn(endLine)
+        });
+        editor.revealRangeInCenterIfOutsideViewport({
+            startLineNumber: startLine, startColumn: 1,
+            endLineNumber: endLine, endColumn: model.getLineMaxColumn(endLine)
+        });
+    }
+    syncHighlightFromEditor();
+    requestAnimationFrame(function () {
+        if (highlightSyncLock === 2) highlightSyncLock = 0;
+        if (previewSyncLock === 2) previewSyncLock = 0;
+    });
+}
+
 function previewHasFocus() {
     var doc = previewFrame() && previewFrame().contentDocument;
     return !!(doc && doc.hasFocus && doc.hasFocus());
@@ -1215,9 +1714,16 @@ function onPreviewKeydown(e) {
 }
 
 function onPreviewClick(e) {
-    if (!state.isEditing) return;
     var a = e.target && e.target.closest ? e.target.closest('a') : null;
     if (a) e.preventDefault();
+    if (!mdPreviewOn()) return;
+    syncEditorFromPreviewSelection();
+}
+
+function onPreviewSelectionChange() {
+    if (!mdPreviewOn() || highlightSyncLock === 1) return;
+    if (!previewHasFocus()) return;
+    syncEditorFromPreviewSelection();
 }
 
 function bindPreviewEditing(win) {
@@ -1227,6 +1733,7 @@ function bindPreviewEditing(win) {
     doc.addEventListener('input', onPreviewInput);
     doc.addEventListener('keydown', onPreviewKeydown);
     doc.addEventListener('click', onPreviewClick);
+    doc.addEventListener('selectionchange', onPreviewSelectionChange);
     applyPreviewEditable();
 }
 
@@ -1293,6 +1800,14 @@ function wireUi() {
     });
     document.getElementById('btn-edit').addEventListener('click', toggleEdit);
     document.getElementById('btn-save').addEventListener('click', saveFile);
+    document.getElementById('save-prompt-yes').addEventListener('click', onSavePromptYes);
+    document.getElementById('save-prompt-no').addEventListener('click', onSavePromptNo);
+    document.getElementById('save-prompt-cancel').addEventListener('click', onSavePromptCancel);
+    document.addEventListener('keydown', function (e) {
+        if (!savePromptOpen()) return;
+        if (e.key === 'Escape') { e.preventDefault(); onSavePromptCancel(); }
+        else if (e.key === 'Enter') { e.preventDefault(); onSavePromptYes(); }
+    });
     document.getElementById('btn-preview').addEventListener('click', function () { setPreviewMode(!state.previewMode); });
     document.getElementById('btn-pdf').addEventListener('click', function () {
         preparePrintContent();
@@ -1306,6 +1821,7 @@ function wireUi() {
         win.addEventListener('scroll', onPreviewScroll, { passive: true });
         bindPreviewEditing(win);
         syncPreviewFromEditor();
+        syncHighlightFromEditor();
     });
 
     var handle = document.getElementById('resize-handle');
