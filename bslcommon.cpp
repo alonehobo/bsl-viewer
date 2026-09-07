@@ -197,7 +197,7 @@ const char* MonacoLanguageForPath(const wchar_t* path)
     ext[n] = 0;
 
     if (!wcscmp(ext, L"bsl") || !wcscmp(ext, L"os"))       return "bsl";
-    if (!wcscmp(ext, L"sdbl") || !wcscmp(ext, L"query"))   return "bsl";
+    if (!wcscmp(ext, L"sdbl") || !wcscmp(ext, L"query"))   return "bsl_query";
     if (!wcscmp(ext, L"md") || !wcscmp(ext, L"markdown"))  return "markdown";
     if (!wcscmp(ext, L"json"))                             return "json";
     if (!wcscmp(ext, L"xml"))                              return "xml";

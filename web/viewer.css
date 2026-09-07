@@ -42,7 +42,15 @@ html.theme-dark #preview { background:#1e1e1e; }
 
 #sort-btn { border:none; background:none; cursor:pointer; font-size:13px; padding:2px 6px; opacity:0.6; border-radius:3px; }
 #sort-btn:hover { opacity:1; background:rgba(0,0,0,0.06); }
-#outline-panel.dark #sort-btn { color:#d4d4d4; }
+#outline-fold, #outline-unfold {
+    appearance: none; -webkit-appearance: none;
+    border: none; background: transparent; box-shadow: none; outline: none;
+    cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px;
+    opacity: 0.55; font-weight: normal; min-width: 0; height: auto;
+}
+#outline-fold:hover, #outline-unfold:hover { opacity:1; background:none; }
+#outline-fold:focus, #outline-unfold:focus { outline:none; }
+#outline-panel.dark #sort-btn, #outline-panel.dark #outline-fold, #outline-panel.dark #outline-unfold { color:#d4d4d4; }
 #outline-panel.dark #sort-btn:hover { background:rgba(255,255,255,0.06); }
 
 .filter-wrap { position:relative; margin:6px 10px; }
@@ -79,8 +87,11 @@ html.theme-dark #preview { background:#1e1e1e; }
 html.theme-dark #loading { color:#ddd; background:#2d2d2d; }
 #loading.error { color:#c0392b; flex-direction:column; text-align:center; padding:0 24px; line-height:1.6; }
 
-#toolbar { position:absolute; right:34px; top:0; z-index:10; display:flex; gap:0; }
+/* First HTML child sits next to the outline toggle; extra mode buttons
+   append on the left so Theme / Карта / Edit / PDF keep their place. */
+#toolbar { position:absolute; right:34px; top:0; z-index:10; display:flex; flex-direction:row-reverse; gap:0; }
 .tb-btn { height:28px; border:none; cursor:pointer; font-size:11px; padding:0 8px; opacity:0.85; white-space:nowrap; }
+#btn-edit { min-width:138px; text-align:center; }
 .tb-btn:hover { opacity:1; }
 .tb-btn.dark { background:#1e1e1e; color:#d4d4d4; }
 .tb-btn.light { background:#f8f8f8; color:#333; }

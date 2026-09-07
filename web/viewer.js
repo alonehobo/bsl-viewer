@@ -35,12 +35,135 @@ var state = {
     isEditing: false,
     previewMode: false,
     sortByName: false,
-    dirty: false
+    dirty: false,
+    minimap: readStoredBool('bsl.minimap', true),
+    bigFile: false
 };
 var allItems = [];
 var baselineContent = '';
 var suppressDirty = false;
 var pendingLeaveEdit = false;
+
+function readStoredBool(key, fallback) {
+    try {
+        var v = localStorage.getItem(key);
+        if (v === '0') return false;
+        if (v === '1') return true;
+    } catch (e) { /* private mode / file:// */ }
+    return fallback;
+}
+
+function writeStoredBool(key, on) {
+    try { localStorage.setItem(key, on ? '1' : '0'); } catch (e) { /* ignore */ }
+}
+
+function isBslModule(lang) { return (lang || state.language) === 'bsl'; }
+function isBslFamily(lang) { return isBslModule(lang) || (lang || state.language) === 'bsl_query'; }
+
+var QUERY_WORDS = [
+    'ВЫБРАТЬ', 'РАЗРЕШЕННЫЕ', 'РАЗЛИЧНЫЕ', 'ПЕРВЫЕ', 'КАК', 'ПУСТАЯТАБЛИЦА', 'ПОМЕСТИТЬ',
+    'ИЗ', 'ВНУТРЕННЕЕ', 'ЛЕВОЕ', 'ВНЕШНЕЕ', 'ПРАВОЕ', 'ПОЛНОЕ', 'СОЕДИНЕНИЕ',
+    'ГДЕ', 'СГРУППИРОВАТЬ', 'ПО', 'ИМЕЮЩИЕ', 'ОБЪЕДИНИТЬ', 'ВСЕ', 'УПОРЯДОЧИТЬ',
+    'АВТОУПОРЯДОЧИВАНИЕ', 'ИТОГИ', 'ОБЩИЕ', 'ТОЛЬКО', 'ИЕРАРХИЯ', 'ПЕРИОДАМИ', 'ДЛЯ',
+    'ИЗМЕНЕНИЯ', 'SELECT', 'ALLOWED', 'DISTINCT', 'TOP', 'AS', 'EMPTYTABLE',
+    'INTO', 'FROM', 'INNER', 'LEFT', 'OUTER', 'RIGHT', 'FULL',
+    'JOIN', 'ON', 'WHERE', 'GROUP', 'BY', 'HAVING', 'UNION',
+    'ALL', 'ORDER', 'AUTOORDER', 'TOTALS', 'OVERALL', 'ONLY', 'HIERARCHY',
+    'СГРУППИРОВАНОПО', 'GROUPEDBY', 'БУЛЕВО', 'BOOLEAN', 'ВОЗР', 'ASC',
+    'ЗНАЧЕНИЕ', 'VALUE', 'ИНДЕКСИРОВАТЬ', 'INDEX', 'ТИП', 'TYPE', 'ТИПЗНАЧЕНИЯ',
+    'VALUETYPE', 'УБЫВ', 'DESC', 'УНИЧТОЖИТЬ', 'DROP',
+    'ГРУППИРУЮЩИМ', 'НАБОРАМ', 'GROUPING', 'SETS',
+    'ДОБАВИТЬ', 'УНИКАЛЬНО'
+];
+var QUERY_EXP = [
+    'АВТОНОМЕРЗАПИСИ', 'RECORDAUTONUMBER', 'В', 'IN', 'ВЫБОР', 'CASE',
+    'ВЫРАЗИТЬ', 'CAST', 'ГОД', 'YEAR', 'ДАТА', 'DATE', 'ДАТАВРЕМЯ',
+    'DATETIME', 'ДЕКАДА', 'TENDAYS', 'ДЕНЬ', 'DAY', 'ДЕНЬГОДА',
+    'DAYOFYEAR', 'ДЕНЬНЕДЕЛИ', 'WEEKDAY', 'ДОБАВИТЬКДАТЕ', 'DATEADD',
+    'ЕСТЬ', 'IS', 'ЕСТЬNULL', 'ISNULL', 'И', 'AND', 'ИЕРАРХИЯ',
+    'HIERARCHY', 'ИЛИ', 'OR', 'ИНАЧЕ', 'ELSE', 'ИСТИНА', 'TRUE',
+    'КВАРТАЛ', 'QUARTER', 'КОЛИЧЕСТВО', 'COUNT', 'КОНЕЦПЕРИОДА',
+    'ENDOFPERIOD', 'КОНЕЦ', 'END', 'ЛОЖЬ', 'FALSE', 'МАКСИМУМ',
+    'MAX', 'МЕЖДУ', 'BETWEEN', 'МЕСЯЦ', 'MONTH', 'МИНИМУМ', 'MIN',
+    'МИНУТА', 'MINUTE', 'НАЧАЛОПЕРИОДА', 'BEGINOFPERIOD', 'НЕ', 'NOT',
+    'НЕДЕЛЯ', 'WEEK', 'НЕОПРЕДЕЛЕНО', 'UNDEFINED', 'ПОДОБНО', 'LIKE',
+    'ПОДСТРОКА', 'SUBSTRING', 'ПОЛУГОДИЕ', 'HALFYEAR', 'ПРЕДСТАВЛЕНИЕ',
+    'PRESENTATION', 'ПРЕДСТАВЛЕНИЕССЫЛКИ', 'REFPRESENTATION',
+    'РАЗНОСТЬДАТ', 'DATEDIFF', 'СЕКУНДА', 'SECOND', 'СПЕЦСИМВОЛ',
+    'ESCAPE', 'СРЕДНЕЕ', 'AVG', 'ССЫЛКА', 'REFS', 'СТРОКА', 'STRING',
+    'СУММА', 'SUM', 'ТОГДА', 'THEN', 'УБЫВ', 'DESC', 'ЧАС', 'HOUR',
+    'ЧИСЛО', 'NUMBER', 'NULL', 'КОГДА', 'WHEN',
+    'СОКРЛП', 'TRIMALL', 'СОКРП', 'TRIMAR', 'СОКРЛ', 'TRIMAL',
+    'ACOS', 'ASIN', 'ATAN', 'COS', 'EXP', 'LOG', 'LOG10', 'SIN', 'SQRT', 'POW',
+    'TAN', 'ОКР', 'ROUND', 'ЦЕЛ', 'INT', 'ДЛИНАСТРОКИ', 'STRINGLENGTH', 'ЛЕВ',
+    'LEFT', 'ПРАВ', 'RIGHT', 'СТРНАЙТИ', 'STRFIND', 'ВРЕГ', 'UPPER', 'НРЕГ',
+    'LOWER', 'СТРЗАМЕНИТЬ', 'STRREPLACE', 'РАЗМЕРХРАНИМЫХДАННЫХ', 'STOREDDATASIZE',
+    'УНИКАЛЬНЫЙИДЕНТИФИКАТОР', 'UUID'
+];
+var QUERY_THEME_LIGHT = [
+    { token: 'query', foreground: '000000' },
+    { token: 'query.quote', foreground: '000000' },
+    { token: 'query.innerquotes', foreground: 'd38949' },
+    { token: 'query.string', foreground: 'df0000' },
+    { token: 'query.keyword', foreground: '0000ff' },
+    { token: 'query.exp', foreground: 'a50000' },
+    { token: 'query.param', foreground: '007b7c' },
+    { token: 'query.brackets', foreground: '0000ff' },
+    { token: 'query.operator', foreground: '0000ff' },
+    { token: 'query.float', foreground: 'ff00ff' },
+    { token: 'query.int', foreground: 'ff00ff' },
+    { token: 'query.comment', foreground: '008000' }
+];
+var QUERY_THEME_DARK = [
+    { token: 'query', foreground: 'e7db6a' },
+    { token: 'query.quote', foreground: 'e7db6a' },
+    { token: 'query.innerquotes', foreground: 'd7ba62' },
+    { token: 'query.string', foreground: 'ff4242' },
+    { token: 'query.keyword', foreground: 'f92472' },
+    { token: 'query.exp', foreground: 'a50000' },
+    { token: 'query.param', foreground: '007b7c' },
+    { token: 'query.brackets', foreground: 'd4d4d4' },
+    { token: 'query.operator', foreground: 'd4d4d4' },
+    { token: 'query.float', foreground: 'ff00ff' },
+    { token: 'query.int', foreground: 'ff00ff' },
+    { token: 'query.comment', foreground: '6a9955' }
+];
+var BSL_SNIPPETS = [
+    { label: 'Если', prefix: 'Если', body: 'Если ${1:Условие} Тогда\n\t$0\nКонецЕсли;' },
+    { label: 'ЕслиИначе', prefix: 'ЕслиИначе', body: 'Если ${1:Условие} Тогда\n\t$0\nИначе\n\t\nКонецЕсли;' },
+    { label: 'Пока', prefix: 'Пока', body: 'Пока ${1:Условие} Цикл\n\t$0\nКонецЦикла;' },
+    { label: 'Для', prefix: 'Для', body: 'Для ${1:Счетчик} = ${2:1} По ${3:Ограничение} Цикл\n\t$0\nКонецЦикла;' },
+    { label: 'ДляКаждого', prefix: 'ДляКаждого', body: 'Для Каждого ${1:Элемент} Из ${2:Коллекция} Цикл\n\t$0\nКонецЦикла;' },
+    { label: 'Процедура', prefix: 'Процедура', body: 'Процедура ${1:ИмяПроцедуры}()\n\t$0\nКонецПроцедуры' },
+    { label: 'Функция', prefix: 'Функция', body: 'Функция ${1:ИмяФункции}()\n\t$0\nКонецФункции' },
+    { label: 'Попытка', prefix: 'Попытка', body: 'Попытка\n\t$0\nИсключение\n\t\nКонецПопытки;' },
+    { label: 'Область', prefix: 'Область', body: '#Область ${1:Имя}\n$0\n#КонецОбласти' },
+    { label: 'Возврат', prefix: 'Возврат', body: 'Возврат ${1:Результат};' },
+    { label: 'If', prefix: 'If', body: 'If ${1:Condition} Then\n\t$0\nEndIf;' },
+    { label: 'While', prefix: 'While', body: 'While ${1:Condition} Do\n\t$0\nEndDo;' },
+    { label: 'Procedure', prefix: 'Procedure', body: 'Procedure ${1:Name}()\n\t$0\nEndProcedure' },
+    { label: 'Function', prefix: 'Function', body: 'Function ${1:Name}()\n\t$0\nEndFunction' },
+    { label: 'Try', prefix: 'Try', body: 'Try\n\t$0\nExcept\n\t\nEndTry;' },
+    { label: 'Region', prefix: 'Region', body: '#Region ${1:Name}\n$0\n#EndRegion' }
+];
+var FOLD_OPEN = {
+    'процедура': 'proc', 'procedure': 'proc',
+    'функция': 'proc', 'function': 'proc',
+    'если': 'if', 'if': 'if',
+    '#если': 'ppif', '#if': 'ppif',
+    'пока': 'loop', 'while': 'loop', 'для': 'loop', 'for': 'loop',
+    'попытка': 'try', 'try': 'try',
+    '#область': 'region', '#region': 'region'
+};
+var FOLD_CLOSE = {
+    'конецпроцедуры': 'proc', 'endprocedure': 'proc',
+    'конецфункции': 'proc', 'endfunction': 'proc',
+    'конецесли': 'if', 'endif': 'if',
+    '#конецесли': 'ppif', '#endif': 'ppif',
+    'конеццикла': 'loop', 'enddo': 'loop',
+    'конецпопытки': 'try', 'endtry': 'try',
+    '#конецобласти': 'region', '#endregion': 'region'
+};
 
 // ---------------------------------------------------------------- host I/O
 
@@ -98,6 +221,9 @@ function defineBsl(monaco) {
             'ДобавитьОбработчик', 'AddHandler', 'УдалитьОбработчик', 'RemoveHandler',
             'Перейти', 'Goto'
         ],
+        queryWords: QUERY_WORDS,
+        queryExp: QUERY_EXP,
+        queryOperators: /[=><+\-*\/%;,]+/,
         operators: ['=', '<=', '>=', '<>', '<', '>', '+', '-', '*', '/', '%'],
         symbols: /[=><!~?:&+\-*\/\^%]+/,
         tokenizer: {
@@ -117,8 +243,35 @@ function defineBsl(monaco) {
                 [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
                 [/\d+/, 'number'],
                 [/[;,.]/, 'delimiter'],
+                [/(")(выбрать|select)/, [
+                    { token: 'query.quote', next: '@query' },
+                    { token: 'query.keyword' }
+                ]],
                 [/"/, { token: 'string.quote', next: '@string' }],
                 [/'[^']*'/, 'date']
+            ],
+            query: [
+                [/\s+/, 'query'],
+                [/[a-zA-Z\u0410-\u044F_\u0401\u0451][a-zA-Z\u0410-\u044F_\u0401\u04510-9]*/, {
+                    cases: {
+                        '@queryWords': 'query.keyword',
+                        '@queryExp': 'query.exp',
+                        '@default': 'query'
+                    }
+                }],
+                [/&[a-zA-Z\u0410-\u044F_\u0401\u0451][a-zA-Z\u0410-\u044F_\u0401\u04510-9]*/, 'query.param'],
+                [/&/, 'query.param'],
+                [/("")+/, 'query.innerquotes'],
+                [/""[^"]*""/, 'query.string'],
+                [/[({})]/, 'query.brackets'],
+                [/\/\/.*$/, 'query.comment'],
+                [/@queryOperators/, 'query.operator'],
+                [/\d*\.\d+([eE][\-+]?\d+)?/, 'query.float'],
+                [/\d+/, 'query.int'],
+                [/\|/, 'query'],
+                [/\./, 'query'],
+                [/"/, { token: 'query.quote', next: '@pop' }],
+                [/[^"&]/, 'query']
             ],
             string: [
                 [/""/, 'string.escape'],
@@ -144,6 +297,12 @@ function defineBsl(monaco) {
         indentationRules: {
             increaseIndentPattern: /^\s*(Процедура|Procedure|Функция|Function|Если|If|Иначе|Else|ИначеЕсли|ElsIf|Пока|While|Для|For|Попытка|Try|Исключение|Except)\b/i,
             decreaseIndentPattern: /^\s*(КонецПроцедуры|EndProcedure|КонецФункции|EndFunction|КонецЕсли|EndIf|КонецЦикла|EndDo|КонецПопытки|EndTry|Иначе|Else|ИначеЕсли|ElsIf|Исключение|Except)\b/i
+        },
+        folding: {
+            markers: {
+                start: new RegExp('^\\s*#\\s*(Область|Region)\\b', 'i'),
+                end: new RegExp('^\\s*#\\s*(КонецОбласти|EndRegion)\\b', 'i')
+            }
         }
     });
 
@@ -173,7 +332,7 @@ function defineBsl(monaco) {
             { token: 'metatag', foreground: '963200' },
             { token: 'attribute.name', foreground: '0000ff' },
             { token: 'attribute.value', foreground: '000000' }
-        ],
+        ].concat(QUERY_THEME_LIGHT),
         colors: {
             'editor.background': '#FFFFFF',
             'editor.foreground': '#0000ff',
@@ -214,7 +373,7 @@ function defineBsl(monaco) {
             { token: 'metatag', foreground: 'c586c0' },
             { token: 'attribute.name', foreground: '9cdcfe' },
             { token: 'attribute.value', foreground: 'c3602c' }
-        ],
+        ].concat(QUERY_THEME_DARK),
         colors: {
             'editor.background': '#1E1E1E',
             'editor.foreground': '#D4D4D4',
@@ -250,7 +409,262 @@ function defineBsl(monaco) {
         }
     });
 
+    monaco.languages.registerFoldingRangeProvider('bsl', {
+        provideFoldingRanges: function (m) { return foldRangesBsl(m); }
+    });
+    monaco.languages.registerDefinitionProvider('bsl', {
+        provideDefinition: function (m, pos) { return findLocalDefinition(m, pos); }
+    });
+    monaco.languages.registerCompletionItemProvider('bsl', {
+        provideCompletionItems: function (m, pos) { return snippetSuggestions(m, pos); }
+    });
+    monaco.languages.registerDocumentFormattingEditProvider('bsl', {
+        provideDocumentFormattingEdits: function (m) { return formatBsl(m, null); },
+        provideDocumentRangeFormattingEdits: function (m, range) { return formatBsl(m, range); }
+    });
+
+    defineBslQuery(monaco);
     defineJsonXml(monaco);
+}
+
+function defineBslQuery(monaco) {
+    monaco.languages.register({ id: 'bsl_query', extensions: ['.sdbl', '.query'], aliases: ['1C Query', 'SDBL'] });
+    monaco.languages.setMonarchTokensProvider('bsl_query', {
+        ignoreCase: true,
+        keywords: QUERY_WORDS,
+        expressions: QUERY_EXP,
+        operators: /[=><+\-*\/%;,]+/,
+        tokenizer: {
+            root: [
+                [/\/\/.*$/, 'query.comment'],
+                [/[a-zA-Z\u0410-\u044F_\u0401\u0451][a-zA-Z\u0410-\u044F_\u0401\u04510-9]*/, {
+                    cases: {
+                        '@keywords': 'query.keyword',
+                        '@expressions': 'query.exp',
+                        '@default': 'query'
+                    }
+                }],
+                [/&[a-zA-Z\u0410-\u044F_\u0401\u0451][a-zA-Z\u0410-\u044F_\u0401\u04510-9]*/, 'query.param'],
+                [/&/, 'query.param'],
+                [/"[^"]*"/, 'query.string'],
+                [/[({})]/, 'query.brackets'],
+                [/@operators/, 'query.operator'],
+                [/\d*\.\d+([eE][\-+]?\d+)?/, 'query.float'],
+                [/\d+/, 'query.int'],
+                [/[^\s]/, 'query']
+            ]
+        }
+    });
+    monaco.languages.setLanguageConfiguration('bsl_query', {
+        comments: { lineComment: '//' },
+        brackets: [['(', ')'], ['[', ']']],
+        autoClosingPairs: [
+            { open: '(', close: ')' },
+            { open: '[', close: ']' },
+            { open: '"', close: '"' }
+        ]
+    });
+    monaco.languages.registerFoldingRangeProvider('bsl_query', {
+        provideFoldingRanges: function (m) { return foldRangesQuery(m); }
+    });
+}
+
+function bslStructureWord(line, inString) {
+    if (inString) return '';
+    var t = line.replace(/^\s+/, '');
+    if (!t || t.indexOf('//') === 0) return '';
+    if (t.charAt(0) === '&') return '';
+    var hash = false;
+    if (t.charAt(0) === '#') {
+        hash = true;
+        t = t.slice(1).replace(/^\s+/, '');
+    }
+    var m = t.match(/^([A-Za-z\u0410-\u044F_\u0401\u0451]+)/);
+    if (!m) return '';
+    var w = m[1].toLowerCase();
+    if (w === 'асинх' || w === 'async') {
+        var rest = t.slice(m[1].length).replace(/^\s+/, '');
+        var m2 = rest.match(/^([A-Za-z\u0410-\u044F_\u0401\u0451]+)/);
+        if (m2) w = m2[1].toLowerCase();
+    }
+    return hash ? ('#' + w) : w;
+}
+
+function scanQuoteState(line, inString) {
+    var i = 0;
+    var queryStart = false;
+    if (!inString) {
+        var trimmed = line.replace(/^\s+/, '');
+        if (trimmed.charAt(0) === '|') {
+            /* Continuation of a multiline string is handled by inString from
+             * the previous line; a lone pipe at the start of a code line is
+             * still a string continuation in 1C. */
+        }
+    }
+    while (i < line.length) {
+        var ch = line.charAt(i);
+        if (inString) {
+            if (ch === '"') {
+                if (line.charAt(i + 1) === '"') { i += 2; continue; }
+                inString = false;
+            }
+            i++;
+            continue;
+        }
+        if (ch === '/' && line.charAt(i + 1) === '/') break;
+        if (ch === '"') {
+            inString = true;
+            var rest = line.slice(i + 1).replace(/^\s+/, '');
+            if (/^(выбрать|select)\b/i.test(rest)) queryStart = true;
+        }
+        i++;
+    }
+    return { inString: inString, queryStart: queryStart };
+}
+
+function foldRangesBsl(m) {
+    var lines = m.getLinesContent();
+    var ranges = [];
+    var stack = [];
+    var inString = false;
+    var queryFoldStart = -1;
+    var i, word, kind, j, item;
+    for (i = 0; i < lines.length; i++) {
+        var prevString = inString;
+        var scan = scanQuoteState(lines[i], inString);
+        inString = scan.inString;
+        if (!prevString && scan.queryStart && scan.inString) queryFoldStart = i;
+        if (prevString && !inString && queryFoldStart >= 0) {
+            if (i > queryFoldStart) ranges.push({ start: queryFoldStart + 1, end: i + 1, kind: monaco.languages.FoldingRangeKind.Region });
+            queryFoldStart = -1;
+        }
+        word = bslStructureWord(lines[i], prevString);
+        if (!word) continue;
+        kind = FOLD_OPEN[word];
+        if (kind) {
+            stack.push({ kind: kind, start: i, proc: kind === 'proc' });
+            continue;
+        }
+        kind = FOLD_CLOSE[word];
+        if (!kind) continue;
+        for (j = stack.length - 1; j >= 0; j--) {
+            if (stack[j].kind === kind) {
+                item = stack.splice(j, 1)[0];
+                if (i > item.start) ranges.push({ start: item.start + 1, end: i + 1, kind: monaco.languages.FoldingRangeKind.Region });
+                break;
+            }
+        }
+    }
+    if (queryFoldStart >= 0 && lines.length - 1 > queryFoldStart) {
+        ranges.push({ start: queryFoldStart + 1, end: lines.length, kind: monaco.languages.FoldingRangeKind.Region });
+    }
+    return ranges;
+}
+
+function foldRangesQuery(m) {
+    var lines = m.getLinesContent();
+    var ranges = [];
+    var stack = [];
+    var i, line, c, top;
+    for (i = 0; i < lines.length; i++) {
+        line = lines[i];
+        for (var k = 0; k < line.length; k++) {
+            c = line.charAt(k);
+            if (c === '/' && line.charAt(k + 1) === '/') break;
+            if (c === '"') {
+                k++;
+                while (k < line.length && line.charAt(k) !== '"') k++;
+                continue;
+            }
+            if (c === '(') stack.push(i);
+            else if (c === ')' && stack.length) {
+                top = stack.pop();
+                if (i > top) ranges.push({ start: top + 1, end: i + 1 });
+            }
+        }
+    }
+    return ranges;
+}
+
+function collectProcedureStarts(m) {
+    var lines = m.getLinesContent();
+    var starts = [];
+    var inString = false;
+    var i, word, kind;
+    for (i = 0; i < lines.length; i++) {
+        var prevString = inString;
+        inString = scanQuoteState(lines[i], inString).inString;
+        word = bslStructureWord(lines[i], prevString);
+        if (!word) continue;
+        kind = FOLD_OPEN[word];
+        if (kind === 'proc' || kind === 'region') starts.push(i);
+    }
+    return starts;
+}
+
+function foldAllProcedures(fold) {
+    if (!editor || !model || !isBslModule()) return;
+    var starts = collectProcedureStarts(model);
+    if (!starts.length) return;
+    editor.trigger('bsl', fold ? 'editor.fold' : 'editor.unfold', { selectionLines: starts });
+    editor.focus();
+}
+
+function findLocalDefinition(m, pos) {
+    var word = m.getWordAtPosition(pos);
+    if (!word || !word.word) return null;
+    var name = word.word;
+    var re = new RegExp('^\\s*(?:Асинх\\s+|Async\\s+)?(Процедура|Procedure|Функция|Function)\\s+' +
+        name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+    var lines = m.getLinesContent();
+    for (var i = 0; i < lines.length; i++) {
+        if (!re.test(lines[i])) continue;
+        return {
+            uri: m.uri,
+            range: {
+                startLineNumber: i + 1, startColumn: 1,
+                endLineNumber: i + 1, endColumn: lines[i].length + 1
+            }
+        };
+    }
+    return null;
+}
+
+function snippetSuggestions(m, pos) {
+    if (!state.isEditing) return { suggestions: [] };
+    var word = m.getWordUntilPosition(pos);
+    var range = {
+        startLineNumber: pos.lineNumber,
+        endLineNumber: pos.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn
+    };
+    var out = [];
+    for (var i = 0; i < BSL_SNIPPETS.length; i++) {
+        var sn = BSL_SNIPPETS[i];
+        out.push({
+            label: sn.label,
+            kind: monaco.languages.CompletionItemKind.Snippet,
+            insertText: sn.body,
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            documentation: sn.label,
+            filterText: sn.prefix,
+            range: range
+        });
+    }
+    return { suggestions: out };
+}
+
+function formatBsl(m, range) {
+    if (!window.BslFormatter) return [];
+    var full = m.getFullModelRange();
+    var use = range || full;
+    var text = m.getValueInRange(use);
+    try {
+        return window.BslFormatter.format(text, use, { eol: m.getEOL() }) || [];
+    } catch (e) {
+        return [];
+    }
 }
 
 /* JSON/XML: register monarch tokenisers up front. Monaco's jsonMode loads
@@ -367,7 +781,7 @@ function editorOptions(big) {
         fontLigatures: false,
         /* Extra translate3d layers on .lines-content fight WebView2's compositor. */
         disableLayerHinting: true,
-        minimap: { enabled: !big },
+        minimap: { enabled: !big && !!state.minimap },
         folding: !big,
         bracketPairColorization: { enabled: !big },
         occurrencesHighlight: big ? 'off' : 'singleFile',
@@ -380,11 +794,12 @@ function editorOptions(big) {
         renderWhitespace: 'none',
         links: false,
         contextmenu: true,
-        quickSuggestions: false,
+        quickSuggestions: !!(state.isEditing && isBslModule()),
         parameterHints: { enabled: false },
         suggestOnTriggerCharacters: false,
-        acceptSuggestionOnEnter: 'off',
-        tabCompletion: 'off',
+        acceptSuggestionOnEnter: (state.isEditing && isBslModule()) ? 'smart' : 'off',
+        tabCompletion: (state.isEditing && isBslModule()) ? 'on' : 'off',
+        snippetSuggestions: (state.isEditing && isBslModule()) ? 'inline' : 'none',
         wordBasedSuggestions: 'off',
         find: { addExtraSpaceOnTop: false },
         unicodeHighlight: { ambiguousCharacters: false, invisibleCharacters: false }
@@ -408,6 +823,7 @@ function applyLoad(req) {
     var old = model;
     model = monaco.editor.createModel(content, state.language);
     if (!big && model.getLineCount() > BIG_FILE_LINES) big = true;
+    state.bigFile = !!big;
 
     ensureEditor(big);
     editor.setModel(model);
@@ -524,6 +940,34 @@ function parkEditor() {
 function wireEditorCommands() {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE, toggleEdit);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveFile);
+    editor.addAction({
+        id: 'bsl.format',
+        label: 'Форматировать документ',
+        keybindings: [monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+        run: function () { formatDocument(); }
+    });
+    editor.addAction({
+        id: 'bsl.comment',
+        label: 'Комментировать строку',
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash],
+        run: function () { toggleLineComment(); }
+    });
+    editor.addAction({
+        id: 'bsl.gotoDefinition',
+        label: 'Перейти к определению',
+        keybindings: [monaco.KeyCode.F12],
+        run: function () {
+            if (!isBslModule() || !model) return;
+            var loc = findLocalDefinition(model, editor.getPosition());
+            if (!loc) return;
+            editor.revealRangeInCenter(loc.range);
+            editor.setPosition({
+                lineNumber: loc.range.startLineNumber,
+                column: loc.range.startColumn
+            });
+            editor.focus();
+        }
+    });
 }
 
 /* Monaco's _applyLayout sets .lines-content to 16777216×16777216. That square
@@ -598,19 +1042,32 @@ function wireStatusBar() {
 
 function parseOutline() {
     var lines = model.getLinesContent();
-    var procRe = /^\s*(Процедура|Procedure|Функция|Function)\s+([a-zA-Z\u0410-\u044F_\u0401\u0451][a-zA-Z\u0410-\u044F_\u0401\u04510-9]*)/i;
+    var procRe = /^\s*(?:Асинх\s+|Async\s+)?(Процедура|Procedure|Функция|Function)\s+([a-zA-Z\u0410-\u044F_\u0401\u0451][a-zA-Z\u0410-\u044F_\u0401\u04510-9]*)/i;
     var regionRe = /^\s*#\s*(Область|Region)\s+(.*)/i;
-    var endRegionRe = /^\s*#\s*(КонецОбласти|EndRegion)/i;
+    var inProc = false;
+    var inString = false;
     allItems = [];
     for (var i = 0; i < lines.length; i++) {
-        var rm = lines[i].match(regionRe);
-        if (rm) { allItems.push({ type: 'region', name: rm[2].trim(), line: i + 1 }); continue; }
-        if (endRegionRe.test(lines[i])) continue;
-        var m = lines[i].match(procRe);
-        if (m) {
+        var prevString = inString;
+        inString = scanQuoteState(lines[i], inString).inString;
+        var word = bslStructureWord(lines[i], prevString);
+        if (!word) continue;
+        if (inProc) {
+            if (FOLD_CLOSE[word] === 'proc') inProc = false;
+            continue;
+        }
+        if (FOLD_OPEN[word] === 'region') {
+            var rm = lines[i].match(regionRe);
+            if (rm) allItems.push({ type: 'region', name: rm[2].trim(), line: i + 1 });
+            continue;
+        }
+        if (FOLD_OPEN[word] === 'proc') {
+            var m = lines[i].match(procRe);
+            if (!m) continue;
             var k = m[1].toLowerCase();
             var isF = (k === 'функция' || k === 'function');
             allItems.push({ type: isF ? 'func' : 'proc', name: m[2], line: i + 1 });
+            inProc = true;
         }
     }
 }
@@ -685,7 +1142,7 @@ function applyChrome() {
     var dk = state.isDark;
     var outlinePanel = document.getElementById('outline-panel');
     var outlineToggle = document.getElementById('outline-toggle');
-    var isBsl = (state.language === 'bsl');
+    var isBsl = isBslModule();
 
     outlinePanel.className = dk ? 'dark' : 'light';
     outlineToggle.className = dk ? 'dark' : 'light';
@@ -706,14 +1163,33 @@ function applyChrome() {
 
     document.getElementById('btn-theme').innerHTML = dk ? '\u263E Темная' : '\u2600 Светлая';
 
+    var mapBtn = document.getElementById('btn-minimap');
+    mapBtn.innerHTML = state.minimap ? '\u25A3 \u041a\u0430\u0440\u0442\u0430' : '\u25A2 \u041a\u0430\u0440\u0442\u0430';
+    mapBtn.title = state.minimap ? '\u0421\u043a\u0440\u044b\u0442\u044c \u043a\u0430\u0440\u0442\u0443 \u043a\u043e\u0434\u0430' : '\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u043a\u0430\u0440\u0442\u0443 \u043a\u043e\u0434\u0430';
+
     var btnEdit = document.getElementById('btn-edit');
     var btnSave = document.getElementById('btn-save');
-    btnEdit.innerHTML = state.isEditing ? '&#9998; Редактирование' : '&#9998; Просмотр';
+    if (state.isEditing) {
+        btnEdit.innerHTML = '&#9998; Просмотр';
+        btnEdit.title = 'Режим просмотра (Ctrl+E)';
+    } else {
+        btnEdit.innerHTML = '&#9998; Редактирование';
+        btnEdit.title = 'Редактировать (Ctrl+E)';
+    }
     btnEdit.classList.toggle('active', state.isEditing);
     btnSave.style.display = state.isEditing ? '' : 'none';
+    document.getElementById('btn-format').style.display = (state.isEditing && isBslModule()) ? '' : 'none';
+    document.getElementById('btn-comment').style.display = state.isEditing ? '' : 'none';
 
     var canPreview = (state.language === 'markdown' || state.language === 'html');
     document.getElementById('btn-preview').style.display = canPreview ? '' : 'none';
+}
+
+function toggleMinimap() {
+    state.minimap = !state.minimap;
+    writeStoredBool('bsl.minimap', state.minimap);
+    if (editor) editor.updateOptions({ minimap: { enabled: !state.bigFile && !!state.minimap } });
+    applyChrome();
 }
 
 function flushPreviewEdits() {
@@ -726,7 +1202,14 @@ function flushPreviewEdits() {
 
 function setEditing(on) {
     state.isEditing = !!on;
-    editor.updateOptions({ readOnly: !state.isEditing });
+    var snip = !!(state.isEditing && isBslModule());
+    editor.updateOptions({
+        readOnly: !state.isEditing,
+        quickSuggestions: snip,
+        acceptSuggestionOnEnter: snip ? 'smart' : 'off',
+        tabCompletion: snip ? 'on' : 'off',
+        snippetSuggestions: snip ? 'inline' : 'none'
+    });
     applyChrome();
     applyPreviewEditable();
     if (state.isEditing && state.previewMode) focusPreview();
@@ -794,6 +1277,19 @@ function toggleEdit() {
     } else {
         setEditing(true);
     }
+}
+
+function formatDocument() {
+    if (!state.isEditing || !isBslModule() || !editor) return;
+    var act = editor.getAction('editor.action.formatDocument');
+    if (act) act.run();
+    editor.focus();
+}
+
+function toggleLineComment() {
+    if (!state.isEditing || !editor) return;
+    editor.trigger('bsl', 'editor.action.commentLine');
+    editor.focus();
 }
 
 function onSavePromptYes() {
@@ -1787,6 +2283,8 @@ function wireUi() {
         state.sortByName = !state.sortByName;
         renderOutline();
     });
+    document.getElementById('outline-fold').addEventListener('click', function () { foldAllProcedures(true); });
+    document.getElementById('outline-unfold').addEventListener('click', function () { foldAllProcedures(false); });
 
     document.getElementById('outline-toggle').addEventListener('click', function () {
         var p = document.getElementById('outline-panel');
@@ -1798,8 +2296,11 @@ function wireUi() {
         state.isDark = !state.isDark;
         applyTheme();
     });
+    document.getElementById('btn-minimap').addEventListener('click', toggleMinimap);
     document.getElementById('btn-edit').addEventListener('click', toggleEdit);
     document.getElementById('btn-save').addEventListener('click', saveFile);
+    document.getElementById('btn-format').addEventListener('click', formatDocument);
+    document.getElementById('btn-comment').addEventListener('click', toggleLineComment);
     document.getElementById('save-prompt-yes').addEventListener('click', onSavePromptYes);
     document.getElementById('save-prompt-no').addEventListener('click', onSavePromptNo);
     document.getElementById('save-prompt-cancel').addEventListener('click', onSavePromptCancel);

@@ -19,3 +19,8 @@ build.log
 web/vs/
 web/marked.min.js
 web/turndown.min.js
+
+# Local build/test artifacts
+dist/
+objtest/
+testdata/scroll-test/

@@ -141,7 +141,8 @@ int main()
     {
         Check(!strcmp(MonacoLanguageForPath(L"a\\b\\Module.bsl"), "bsl"), ".bsl -> bsl");
         Check(!strcmp(MonacoLanguageForPath(L"Module.OS"), "bsl"), ".OS is case-insensitive");
-        Check(!strcmp(MonacoLanguageForPath(L"query.sdbl"), "bsl"), ".sdbl -> bsl");
+        Check(!strcmp(MonacoLanguageForPath(L"query.sdbl"), "bsl_query"), ".sdbl -> bsl_query");
+        Check(!strcmp(MonacoLanguageForPath(L"q.QUERY"), "bsl_query"), ".query -> bsl_query");
         Check(!strcmp(MonacoLanguageForPath(L"readme.md"), "markdown"), ".md -> markdown");
         Check(!strcmp(MonacoLanguageForPath(L"data.json"), "json"), ".json -> json");
         Check(!strcmp(MonacoLanguageForPath(L"meta.XML"), "xml"), ".xml is case-insensitive");
