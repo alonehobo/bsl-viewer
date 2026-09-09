@@ -34,6 +34,7 @@ var FORM_TAGS = {
 };
 
 var activePageIdByPagesKey = Object.create(null);
+var collapsedGroupByKey = Object.create(null);
 
 /* Shared XML helpers live in xml-util.js; aliased locally for brevity. */
 var XU = root.XmlUtil;
@@ -719,6 +720,26 @@ function bindGroupPopupToggle(wrap, btn, ctx, item) {
     });
 }
 
+function bindCollapsibleToggle(wrap, btn, ctx, item) {
+    if (!wrap || !btn) return;
+    var group = wrap.querySelector('.fp-collapsible-group');
+    var arrow = btn.querySelector('.fp-collapse-arrow');
+    btn.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (!group) return;
+        var collapsed = !group.classList.contains('fp-collapsed');
+        group.classList.toggle('fp-collapsed', collapsed);
+        btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        if (arrow) arrow.textContent = collapsed ? '▸' : '▾';
+        collapsedGroupByKey[itemKey(item)] = collapsed;
+        if (item && ctx) {
+            selectIn(ctx.root, itemKey(item), ctx);
+            if (ctx.onSelect) ctx.onSelect(item);
+        }
+    });
+}
+
 function makePopupMenu(item, ctx) {
     var menu = el('div', 'fp-popup-menu');
     var entries = popupMenuEntries(item);
@@ -940,6 +961,7 @@ function wantsHStretch(item, tag, parentMeta, ctx) {
     var hs = prop(item, ['HorizontalStretch', 'ГоризонтальноеРастягивание']);
     if (isFalse(hs)) return false;
     if (isTrue(hs)) return true;
+    if (tag === 'SpreadSheetDocumentField') return true;
     if (compactTag(tag)) return false;
     if (tag === 'Table') return true;
     if (tag === 'Pages') return pagesRep(item) !== 'none';
@@ -961,7 +983,7 @@ function fieldHeight(item) {
 function wantsVStretch(item, tag, ctx) {
     var vs = prop(item, ['VerticalStretch']);
     if (isFalse(vs)) return false;
-    if (tag === 'Table') return true;
+    if (tag === 'Table' || tag === 'SpreadSheetDocumentField') return true;
     if (tag === 'Pages' && pagesRep(item) !== 'none') return true;
     if (tag === 'InputField') {
         if (fieldHeight(item) > 0) return false;
@@ -1374,6 +1396,10 @@ function groupBehavior(item) {
     return 'usual';
 }
 
+function initiallyCollapsed(item) {
+    return groupBehavior(item) === 'collapsible' && isTrue(prop(item, ['Collapsed', 'Свернута', 'Свернуто']));
+}
+
 function isPopUpGroup(item) {
     return groupBehavior(item) === 'popup';
 }
@@ -1550,6 +1576,54 @@ function el(tag, cls, text) {
     return n;
 }
 
+function formattedTextParts(value) {
+    var source = String(value == null ? '' : value);
+    var parts = [];
+    var stack = [];
+    var pos = 0;
+    var tagRe = /<([^<>]*)>/g;
+    var match;
+    function push(text, link) {
+        if (!text) return;
+        var prev = parts.length ? parts[parts.length - 1] : null;
+        if (prev && prev.link === link) prev.text += text;
+        else parts.push({ text: text, link: link });
+    }
+    while ((match = tagRe.exec(source))) {
+        push(source.slice(pos, match.index), stack.indexOf('link') >= 0);
+        var body = String(match[1] || '').trim();
+        if (body === '/') {
+            if (stack.length) stack.pop();
+        } else if (!/\/$/.test(body)) {
+            var name = (body.match(/^\/?([^\s/>]+)/) || [])[1];
+            if (name) stack.push(String(name).toLowerCase());
+        }
+        pos = tagRe.lastIndex;
+    }
+    push(source.slice(pos), stack.indexOf('link') >= 0);
+    return parts;
+}
+
+function plainFormattedText(value) {
+    return formattedTextParts(value).map(function (part) { return part.text; }).join('');
+}
+
+function setFormattedText(node, value, forceLink) {
+    if (!node) return false;
+    node.textContent = '';
+    var parts = formattedTextParts(value);
+    var hasLink = false;
+    for (var i = 0; i < parts.length; i++) {
+        if (forceLink || parts[i].link) {
+            node.appendChild(el('span', 'fp-rich-link', parts[i].text));
+            hasLink = true;
+        } else {
+            node.appendChild(document.createTextNode(parts[i].text));
+        }
+    }
+    return hasLink;
+}
+
 function fallbackWidget(label, tag) {
     var w = el('div', 'fp-fallback-widget');
     w.appendChild(el('span', 'fp-fallback-label', label || '—'));
@@ -1635,6 +1709,7 @@ function resolveButtonRep(item, ctx) {
 
 function makeBarButton(item, tag, ctx) {
     var label = displayLabel(item, ctx, tag);
+    var plainLabel = plainFormattedText(label);
     var btnType = String(prop(item, ['Type']) || '').toLowerCase();
     var isLink = tag === 'Hyperlink' || btnType.indexOf('hyperlink') >= 0;
     var isDefault = isTrue(prop(item, ['DefaultButton']));
@@ -1653,15 +1728,15 @@ function makeBarButton(item, tag, ctx) {
     var iconName = iconIdFor(item, ctx);
     if (iconOnly) {
         btn.appendChild(svgIcon(iconName));
-        btn.title = displayLabel(item, ctx, tag) || item.name || '';
+        btn.title = plainLabel || item.name || '';
     } else if (rep === 'pictureandtext') {
         btn.appendChild(svgIcon(iconName));
-        btn.appendChild(el('span', 'fp-btn-text', label || item.name || ''));
+        btn.appendChild(el('span', 'fp-btn-text', plainLabel || item.name || ''));
         if (tag === 'Popup') btn.appendChild(el('span', 'fp-caret', '▾'));
-        btn.title = label || item.name || '';
+        btn.title = plainLabel || item.name || '';
     } else {
-        btn.textContent = (label || (tag === 'Popup' ? 'Меню' : '…')) + (tag === 'Popup' ? ' ▾' : '');
-        btn.title = label || item.name || '';
+        btn.textContent = (plainLabel || (tag === 'Popup' ? 'Меню' : '…')) + (tag === 'Popup' ? ' ▾' : '');
+        btn.title = plainLabel || item.name || '';
     }
     if (isHelpItem(item)) btn.classList.add('fp-help-btn');
     return btn;
@@ -1756,8 +1831,19 @@ function createControl(item, tag, ctx) {
         var lfText = label;
         if (!lfText && (loc === 'none' || asLink)) lfText = '';
         else if (!lfText) lfText = '—';
-        if (lfText) wrap.appendChild(el('span', lfCls, lfText));
+        if (lfText) {
+            var lf = el('span', lfCls);
+            setFormattedText(lf, lfText, asLink);
+            wrap.appendChild(lf);
+        }
         else if (asLink) wrap.appendChild(el('span', lfCls, '\u00a0'));
+    } else if (tag === 'SpreadSheetDocumentField') {
+        wrap.className = 'fp-control-wrap fp-spreadsheet-field';
+        var viewport = el('div', 'fp-spreadsheet-viewport');
+        var surface = el('div', 'fp-spreadsheet-surface');
+        surface.appendChild(el('div', 'fp-spreadsheet-cell'));
+        viewport.appendChild(surface);
+        wrap.appendChild(viewport);
     } else if (tag === 'Table') {
         wrap.className = 'fp-control-wrap fp-table-widget';
         var toolbar = el('div', 'fp-table-toolbar fp-commandbar');
@@ -1852,9 +1938,12 @@ function createControl(item, tag, ctx) {
         wrap.appendChild(bg);
         wrap._childBox = bg;
     } else if (isContainer(tag)) {
-        var popup = isPopUpGroup(item);
+        var behavior = groupBehavior(item);
+        var popup = behavior === 'popup';
+        var collapsible = behavior === 'collapsible';
         var group = el('div', representationOf(item) === 'none' ? 'fp-group-bare' : 'fp-group-block');
         if (popup) group.classList.add('fp-popup-group');
+        if (collapsible) group.classList.add('fp-collapsible-group');
         if (showGroupTitle(item) && label) {
             var ttc = prop(item, ['TitleTextColor', 'ЦветТекстаЗаголовка']);
             var linkTitle = popup || /гиперссылка/i.test(ttc);
@@ -1863,17 +1952,37 @@ function createControl(item, tag, ctx) {
                 titleBtn.type = 'button';
                 group.appendChild(titleBtn);
                 wrap._popupTitleBtn = titleBtn;
+            } else if (collapsible) {
+                var groupKey = itemKey(item);
+                var collapsed = Object.prototype.hasOwnProperty.call(collapsedGroupByKey, groupKey)
+                    ? !!collapsedGroupByKey[groupKey] : initiallyCollapsed(item);
+                var collapseBtn = el('button', 'fp-collapsible-title');
+                collapseBtn.type = 'button';
+                collapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                collapseBtn.appendChild(el('span', 'fp-collapse-arrow', collapsed ? '▸' : '▾'));
+                var collapseText = el('span', 'fp-collapse-text');
+                setFormattedText(collapseText, label, false);
+                collapseBtn.appendChild(collapseText);
+                group.appendChild(collapseBtn);
+                if (collapsed) group.classList.add('fp-collapsed');
+                wrap._collapseTitleBtn = collapseBtn;
             } else {
-                group.appendChild(el('div', 'fp-group-title' + (linkTitle ? ' fp-link' : ''), label));
+                var groupTitle = el('div', 'fp-group-title' + (linkTitle ? ' fp-link' : ''));
+                setFormattedText(groupTitle, label, linkTitle);
+                group.appendChild(groupTitle);
             }
         }
-        var kids = el('div', popup ? 'fp-popup-group-body' : '');
+        var kids = el('div', popup ? 'fp-popup-group-body' : (collapsible ? 'fp-collapsible-body' : ''));
         group.appendChild(kids);
         wrap.appendChild(group);
         wrap._childBox = kids;
     } else if (tag === 'LabelDecoration') {
         var dcls = 'fp-label fp-label-decoration' + (isHyperlinkItem(item) ? ' fp-link' : '');
-        if (label) wrap.appendChild(el('span', dcls, label));
+        if (label) {
+            var decoration = el('span', dcls);
+            setFormattedText(decoration, label, isHyperlinkItem(item));
+            wrap.appendChild(decoration);
+        }
         else {
             var nm = String(item.name || '');
             if (/разделител/i.test(nm)) wrap.appendChild(el('span', 'fp-deco-sep'));
@@ -1889,7 +1998,7 @@ function createControl(item, tag, ctx) {
         picWrap.appendChild(svgIcon(iconIdFromRef(pictureRef(item)) || 'alert-triangle'));
         wrap.appendChild(picWrap);
     } else if (RARE_TAGS[tag]) {
-        wrap.appendChild(fallbackWidget(label, tag));
+        wrap.appendChild(fallbackWidget(plainFormattedText(label), tag));
     } else {
         wrap.appendChild(el('span', 'fp-fallback', label + (tag ? ' (' + tag + ')' : '')));
     }
@@ -2084,6 +2193,8 @@ function renderPreview(items, parentEl, ctx, parentItem) {
         if (tag === 'Popup' && control._popupBtn) bindPopupToggle(control, control._popupBtn, ctx, item);
         if (isPopUpGroup(item) && control._popupTitleBtn)
             bindGroupPopupToggle(control, control._popupTitleBtn, ctx, item);
+        if (groupBehavior(item) === 'collapsible' && control._collapseTitleBtn)
+            bindCollapsibleToggle(control, control._collapseTitleBtn, ctx, item);
         parentEl.appendChild(div);
         if (tag === 'Table') {
             var cols = control._tableCols || tableColumns(item);
@@ -2259,7 +2370,7 @@ function walkOutline(items, depth, map, out, ctx) {
     for (var i = 0; i < items.length; i++) {
         var it = items[i];
         if (!it || SKIP_TAGS[it.tag]) continue;
-        var label = titleOf(it, ctx);
+        var label = plainFormattedText(titleOf(it, ctx));
         var name = it.name || it.tag || '';
         out.push({
             type: 'form',
@@ -2488,6 +2599,9 @@ root.FormPreview = {
         tableStdCommands: tableStdCommands,
         showGroupTitle: showGroupTitle,
         groupBehavior: groupBehavior,
+        initiallyCollapsed: initiallyCollapsed,
+        formattedTextParts: formattedTextParts,
+        plainFormattedText: plainFormattedText,
         isPopUpGroup: isPopUpGroup,
         applyLabelWidth: applyLabelWidth,
         fieldKind: fieldKind,

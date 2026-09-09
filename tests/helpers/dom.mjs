@@ -8,6 +8,12 @@ import vm from 'node:vm';
 export function parseXmlDom(xml) {
   xml = String(xml).replace(/^\uFEFF/, '').replace(/<\?xml[\s\S]*?\?>/, '').replace(/<!--[\s\S]*?-->/g, '');
   let pos = 0;
+  function decodeEntities(text) {
+    return String(text)
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+      .replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  }
   function skipWs() {
     while (pos < xml.length && /\s/.test(xml[pos])) pos++;
   }
@@ -78,7 +84,9 @@ export function parseXmlDom(xml) {
         pos = end < 0 ? xml.length : end;
       }
     }
-    node.textContent = (texts.join('') + node.children.map((c) => c.textContent).join('')).replace(/\s+/g, ' ').trim();
+    node.textContent = decodeEntities(
+      texts.join('') + node.children.map((c) => c.textContent).join('')
+    ).replace(/\s+/g, ' ').trim();
     return node;
   }
   skipWs();

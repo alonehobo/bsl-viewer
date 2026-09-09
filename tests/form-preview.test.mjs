@@ -342,6 +342,51 @@ test('PopUp group keeps title even without ShowTitle', () => {
   assert.equal(T.showGroupTitle(g), true);
 });
 
+test('formatted 1C links keep visible text and mark only link fragments', () => {
+  const src = 'См. также: <link Открыть>Список</> (2) <img 0:guid/>';
+  const parts = Array.from(T.formattedTextParts(src), (part) => ({ text: part.text, link: part.link }));
+  assert.deepEqual(parts, [
+    { text: 'См. также: ', link: false },
+    { text: 'Список', link: true },
+    { text: ' (2) ', link: false }
+  ]);
+  assert.equal(T.plainFormattedText(src), 'См. также: Список (2) ');
+  assert.equal(T.plainFormattedText('<link 2>Состав</><link 2> набора (1</><link 2>)</>'), 'Состав набора (1)');
+  assert.equal(T.plainFormattedText('<link 2>С</><bgcolorstyle -1><link 2>егменты</></>'), 'Сегменты');
+});
+
+test('outline strips formatted-link markup from element titles', () => {
+  const xml = `<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core">
+    <ChildItems><LabelDecoration name="Link" id="9"><Title formatted="true">
+      <v8:item><v8:lang>ru</v8:lang><v8:content>&lt;link 1&gt;Список (2)&lt;/&gt;</v8:content></v8:item>
+    </Title></LabelDecoration></ChildItems></Form>`;
+  const parsed = FP.parse(xml);
+  assert.ok(!parsed.error, parsed.error);
+  const item = FP.outline(parsed.model, xml).find((entry) => entry.id === '9');
+  assert.equal(item.title, 'Список (2)');
+  assert.equal(item.title.includes('<link'), false);
+});
+
+test('collapsible groups recognize initial state and spreadsheet fields stretch', () => {
+  const expanded = { properties: { Behavior: 'Collapsible' } };
+  const collapsed = { properties: { Behavior: 'Collapsible', Collapsed: 'true' } };
+  assert.equal(T.groupBehavior(expanded), 'collapsible');
+  assert.equal(T.initiallyCollapsed(expanded), false);
+  assert.equal(T.initiallyCollapsed(collapsed), true);
+  assert.equal(T.wantsHStretch({ properties: {} }, 'SpreadSheetDocumentField', null), true);
+  assert.equal(T.wantsVStretch({ properties: {} }, 'SpreadSheetDocumentField'), true);
+});
+
+test('form preview CSS has no scroll container on ordinary horizontal groups', () => {
+  const css = fs.readFileSync(path.join(root, 'web', 'viewer.css'), 'utf8');
+  const rule = css.match(/\.fp-children\.fp-children-horizontal\s*\{([^}]*)\}/);
+  assert.ok(rule, 'horizontal group rule');
+  assert.match(rule[1], /overflow-x:\s*visible/);
+  assert.doesNotMatch(rule[1], /overflow-x:\s*auto/);
+  assert.match(css, /\.fp-spreadsheet-viewport\s*\{[^}]*overflow:\s*scroll/s);
+  assert.match(css, /\.fp-collapsible-group\.fp-collapsed\s*>\s*\.fp-collapsible-body/);
+});
+
 test('applyLabelWidth equalizes titles in one vertical group', () => {
   const labs = [
     { offsetWidth: 48, textContent: 'Автор:', style: {} },
