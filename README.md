@@ -18,9 +18,10 @@ WLX-плагин для Total Commander, обеспечивающий просм
 - Minimap (карта кода)
 - Нумерация строк, сворачивание блоков (folding)
 - Автоопределение кодировки (UTF-8 BOM, UTF-8, UTF-16 LE/BE, Windows-1251)
-- Поддерживаемые расширения: `.bsl`, `.os`, `.sdbl`, `.query`, `.md`, `.json`, `.xml` и другие текстовые
+- Поддерживаемые расширения: `.bsl`, `.os`, `.sdbl`, `.query`, `.md`, `.json`, `.xml`, `.mxl` и другие текстовые
 - Язык запросов 1С: отдельная подсветка для `.sdbl` / `.query` и текста запроса внутри BSL
 - Markdown: исходник слева и превью справа, с синхронизацией активной строки и выделения
+- **Формы 1С (`Form.xml`)**: исходник слева и визуальный макет справа (группы, поля, страницы, таблицы, командная панель); дерево элементов в панели структуры
 - При выходе из режима правки — запрос сохранения; отказ перечитывает файл с диска
 - 32-bit и 64-bit версии
 - Fallback на C++ подсветчик через IE при отсутствии WebView2
@@ -90,6 +91,20 @@ WLX-плагин для Total Commander, обеспечивающий просм
 
 ![XML во вьюере](screens/viewer-xml.png)
 
+### Форма 1С (`Form.xml`) — визуальный макет
+
+Если XML — управляемая форма конфигуратора (`xmlns` logform / `Ext/Form.xml`), справа открывается макет как в CDT 41: командная панель, группы, поля, вкладки страниц и таблицы. Клик по элементу в макете или в дереве справа подсвечивает соответствующий узел в XML.
+
+**Lister F3**
+
+![Форма 1С во вьюере](screens/viewer-form.png)
+
+### Макет 1С (`Template.xml`) — табличный документ
+
+Если XML — макет табличного документа конфигуратора (`xmlns` spreadsheet / `Ext/Template.xml`), открывается сетка как в редакторе макета: колонки и строки, именованные области слева, параметры `<Имя>`, объединения ячеек и рисунки (штрихкод). Клик по области в дереве справа подсвечивает блок в макете.
+
+`.mxl` (MXL8, 1С 8.x / BAS) разбирается тем же способом: скобочный формат из [azubar/SpreadSheet](https://github.com/azubar/SpreadSheet) превращается в ту же сетку. Файлы 1С 7.7 (бинарный MOXCEL) не поддерживаются.
+
 ## Сборка
 
 ### Требования
@@ -113,11 +128,17 @@ build.bat
 
 ### Тесты
 
+C++ (`bslcommon.cpp`): определение кодировки, побайтовый round-trip при сохранении, JSON-экранирование.
+
 ```batch
 tools\run-tests.bat
 ```
 
-Проверяют определение кодировки, побайтовый round-trip при сохранении и JSON-экранирование.
+JS (`web/form-preview.js`, `web/template-preview.js`, `web/mxl-preview.js`, скрипт памяти проекта): рендер предпросмотра форм и макетов 1С, `scripts/memory-gate.mjs`.
+
+```bash
+npm test
+```
 
 ### Замеры производительности
 
@@ -137,6 +158,9 @@ powershell -File tools\bench-plugin.ps1
 | `bslcommon.cpp/h` | Чтение/запись файлов с сохранением кодировки, JSON-экранирование |
 | `webview2host.cpp/h` | Обертка над WebView2: общее окружение, пул прогретых экземпляров |
 | `web/viewer.html/css/js` | Интерфейс редактора: Monaco, токенизатор BSL, панель структуры |
+| `web/form-preview.js` | Разбор и визуальный макет управляемых форм 1С (`Form.xml`) |
+| `web/template-preview.js` | Сетка макета табличного документа (`Template.xml`) |
+| `web/mxl-preview.js` | Разбор `.mxl` (MXL8) в ту же модель сетки |
 | `web/vs/` | Monaco Editor (скачивается, не хранится в репозитории) |
 | `browserhost.cpp/h` | Обертка над IE WebBrowser (fallback) |
 | `bslhighlight.cpp/h` | C++ подсветчик BSL для IE fallback |
@@ -211,7 +235,7 @@ KeepWarm=1       ; держать один экземпляр WebView2 межд�
 [Extensions]
 BSLExtensions=bsl;os
 QueryExtensions=sdbl;query
-TextExtensions=md;markdown;json;xml;ps1;psm1;psd1;html;htm
+TextExtensions=md;markdown;json;xml;ps1;psm1;psd1;html;htm;mxl
 ```
 
 `KeepWarm=1` — главный параметр скорости: плагин держит один прогретый экземпляр
@@ -239,6 +263,8 @@ Commander, так что добавленное сюда расширение н
 
 - [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) — для Monaco Editor (обычно уже установлен с Windows 10/11)
 - [Monaco Editor](https://microsoft.github.io/monaco-editor/) — загружается с CDN при первом открытии
+- Визуальный макет форм вдохновлён [CDT 41](https://github.com/lekot/VScodePluginFor1CDev) (MIT)
+- Разбор `.mxl` — по схеме [azubar/SpreadSheet](https://github.com/azubar/SpreadSheet) (MIT)
 
 ## Лицензия
 

@@ -37,7 +37,11 @@ var state = {
     sortByName: false,
     dirty: false,
     minimap: readStoredBool('bsl.minimap', true),
-    bigFile: false
+    bigFile: false,
+    previewId: '',
+    formSelectedId: '',
+    objectMeta: '',
+    outlineCollapsed: {}
 };
 var allItems = [];
 var baselineContent = '';
@@ -59,6 +63,125 @@ function writeStoredBool(key, on) {
 
 function isBslModule(lang) { return (lang || state.language) === 'bsl'; }
 function isBslFamily(lang) { return isBslModule(lang) || (lang || state.language) === 'bsl_query'; }
+
+/* Preview providers. When one of these claims a file the viewer shows a
+ * rendered document instead of source: the outline lists the document's own
+ * structure and the preview pane replaces the editor entirely, rather than
+ * splitting the window with the markdown/HTML iframe.
+ *
+ * First match wins, so order matters — a managed form is also valid XML.
+ *
+ * `parser` and `viewer` are separate on purpose: an .mxl binary is decoded by
+ * MxlPreview but drawn by TemplatePreview, because both produce the same
+ * spreadsheet model. Adding a format means adding an entry here, not another
+ * branch in every function below. */
+var PREVIEW_PROVIDERS = [
+    {
+        id: 'form',
+        parser: 'FormPreview',
+        viewer: 'FormPreview',
+        /* A form mockup stands in for the real 1C application window, so it
+         * always renders as light chrome and hides the theme toggle. */
+        lightChrome: true,
+        /* Its outline is a collapsible element tree, not a flat list. */
+        tree: true,
+        outlineTitle: 'Элементы формы',
+        sourceTitle: 'Показать форму',
+        rootCls: 'fp-root',
+        emptyCls: 'fp-empty',
+        emptyMsg: 'Это не форма 1С (нет корневого Form / logform).',
+        detect: function (content) {
+            return state.language === 'xml' && FormPreview.detect(content);
+        },
+        parse: function (content) { return FormPreview.parse(content, state.objectMeta); }
+    },
+    {
+        id: 'mxl',
+        parser: 'MxlPreview',
+        viewer: 'TemplatePreview',
+        outlineTitle: 'Области макета',
+        sourceTitle: 'Показать макет',
+        rootCls: 'tp-root',
+        emptyCls: 'tp-empty',
+        emptyMsg: 'Это не макет табличного документа 1С.',
+        /* Area ids in a spreadsheet outline are synthesised, so selection also
+         * matches on the area name and falls back to a text scan. */
+        selectMatchesByName: true,
+        selectHighlightsPreview: true,
+        detect: function (content) { return MxlPreview.detect(content); },
+        parse: function (content) { return MxlPreview.parse(content); }
+    },
+    {
+        id: 'template',
+        parser: 'TemplatePreview',
+        viewer: 'TemplatePreview',
+        outlineTitle: 'Области макета',
+        sourceTitle: 'Показать макет',
+        rootCls: 'tp-root',
+        emptyCls: 'tp-empty',
+        emptyMsg: 'Это не макет табличного документа 1С.',
+        selectMatchesByName: true,
+        selectHighlightsPreview: true,
+        detect: function (content) { return TemplatePreview.detect(content); },
+        parse: function (content) { return TemplatePreview.parse(content); }
+    }
+];
+
+/* Usable only once both the module that parses for it and the module that
+ * draws it are on the page. */
+function providerReady(p) {
+    return !!(p && window[p.parser] && window[p.viewer]);
+}
+
+function detectProvider(content) {
+    for (var i = 0; i < PREVIEW_PROVIDERS.length; i++) {
+        var p = PREVIEW_PROVIDERS[i];
+        if (providerReady(p) && p.detect(content)) return p;
+    }
+    return null;
+}
+
+function providerById(id) {
+    for (var i = 0; i < PREVIEW_PROVIDERS.length; i++) {
+        if (PREVIEW_PROVIDERS[i].id === id) return PREVIEW_PROVIDERS[i];
+    }
+    return null;
+}
+
+/* The provider claiming the file currently loaded, or null for plain source. */
+function currentProvider() {
+    var p = providerById(state.previewId);
+    return providerReady(p) ? p : null;
+}
+
+/* The module that renders, highlights and outlines for the active provider. */
+function previewView() {
+    var p = currentProvider();
+    return p ? window[p.viewer] : null;
+}
+
+function isFormView() { var p = currentProvider(); return !!(p && p.id === 'form'); }
+
+/* True whenever a provider owns the view, i.e. the editor is replaced rather
+ * than split with the preview iframe. */
+function isDocPreview() { return !!currentProvider(); }
+
+/* True when the outline is a collapsible tree rather than a flat list. */
+function docTree() { var p = currentProvider(); return !!(p && p.tree); }
+
+/* Only a real 1C form mockup must always render as light UI chrome (it stands
+ * in for the actual application window). A table-document (template) preview
+ * is just a document view, so it follows the user's chosen theme like any
+ * other file — it must not silently flip when previewMode toggles. */
+function formPreviewOpen() {
+    var p = currentProvider();
+    return !!(p && p.lightChrome && state.previewMode);
+}
+function uiIsDark() { return formPreviewOpen() ? false : !!state.isDark; }
+function canPreviewLang() {
+    return state.language === 'markdown' || state.language === 'html' || isDocPreview();
+}
+function formPreviewEl() { return document.getElementById('form-preview'); }
 
 var QUERY_WORDS = [
     'ВЫБРАТЬ', 'РАЗРЕШЕННЫЕ', 'РАЗЛИЧНЫЕ', 'ПЕРВЫЕ', 'КАК', 'ПУСТАЯТАБЛИЦА', 'ПОМЕСТИТЬ',
@@ -814,6 +937,11 @@ function applyLoad(req) {
     state.readOnly = (req.readOnly !== false);
     state.isEditing = !state.readOnly;
     state.previewMode = false;
+    state.objectMeta = req.objectMeta || '';
+    var loaded = detectProvider(content);
+    state.previewId = loaded ? loaded.id : '';
+    state.formSelectedId = '';
+    state.outlineCollapsed = {};
     state.dirty = false;
     baselineContent = content;
     pendingLeaveEdit = false;
@@ -842,14 +970,12 @@ function applyLoad(req) {
     applyTheme();
     updateStatusBar();
     finishFirstPaint();
-    setPreviewMode(state.language === 'markdown' || state.language === 'html');
+    setPreviewMode(state.language === 'markdown' || state.language === 'html' || isDocPreview());
 
     /* Outline scanning walks every line, so let the editor paint first. */
     allItems = [];
     renderOutline();
-    setTimeout(function () {
-        if (state.language === 'bsl') { parseOutline(); renderOutline(); }
-    }, 0);
+    setTimeout(refreshOutline, 0);
 }
 
 /* Create the editor once, preferably while the parked warm instance is still
@@ -932,6 +1058,7 @@ function parkEditor() {
     pendingLeaveEdit = false;
     hideSavePrompt();
     if (state.previewMode) setPreviewMode(false);
+    state.previewId = '';
     renderOutline();
     updateStatusBar();
     document.getElementById('loading').style.display = 'flex';
@@ -1040,6 +1167,26 @@ function wireStatusBar() {
 
 // ----------------------------------------------------------------- outline
 
+/* Outline of the rendered document (form elements, template areas), as opposed
+ * to parseOutline() which scans BSL source for procedures and regions. */
+function parseDocOutline() {
+    allItems = [];
+    var p = currentProvider();
+    if (!p || !model) return;
+    var src = model.getValue();
+    var parsed = p.parse(src);
+    if (!parsed || !parsed.model) return;
+    allItems = window[p.viewer].outline(parsed.model, src);
+}
+
+/* Rebuilds whichever outline the loaded file has; a no-op for everything else. */
+function refreshOutline() {
+    if (state.language === 'bsl') parseOutline();
+    else if (isDocPreview()) parseDocOutline();
+    else return;
+    renderOutline();
+}
+
 function parseOutline() {
     var lines = model.getLinesContent();
     var procRe = /^\s*(?:Асинх\s+|Async\s+)?(Процедура|Procedure|Функция|Function)\s+([a-zA-Z\u0410-\u044F_\u0401\u0451][a-zA-Z\u0410-\u044F_\u0401\u04510-9]*)/i;
@@ -1085,16 +1232,50 @@ function renderOutline() {
     var cnt = 0;
     for (var i = 0; i < allItems.length; i++) if (allItems[i].type !== 'region') cnt++;
 
-    document.getElementById('outline-count').textContent = 'Структура (' + cnt + ')';
+    document.getElementById('outline-count').textContent = (isDocPreview() ? 'Элементы (' : 'Структура (') + cnt + ')';
     var sortBtn = document.getElementById('sort-btn');
-    sortBtn.textContent = state.sortByName ? '@\u2193' : '#\u2193';
-    sortBtn.title = state.sortByName ? 'По имени \u2192 По порядку' : 'По порядку \u2192 По имени';
-
+    setIcon('sort-btn', state.sortByName ? 'sort-numbers' : 'sort-letters');
+    sortBtn.title = state.sortByName ? 'Сортировка: по имени (нажмите — по порядку)' : 'Сортировка: по порядку (нажмите — по имени)';
     var h = [];
     for (var j = 0; j < items.length; j++) {
         var it = items[j];
         if (it.type === 'region') {
             h.push('<div class="region-group">', esc(it.name), '</div>');
+        } else if (it.type === 'form') {
+            var iconCls = 'icon-form-etc';
+            var iconName = 'box';
+            var iconCh = '';
+            if (it.tag === 'TemplateArea') {
+                var tic = (window.TemplatePreview && TemplatePreview.outlineIcon)
+                    ? TemplatePreview.outlineIcon(it)
+                    : { cls: 'icon-form-tbl', ch: 'A' };
+                iconCls = tic.cls;
+                iconCh = tic.ch;
+            } else {
+                var fic = (window.FormPreview && FormPreview.iconFor)
+                    ? FormPreview.iconFor(it.tag)
+                    : { cls: 'icon-form-etc', icon: 'box' };
+                iconCls = fic.cls;
+                iconName = fic.icon || 'box';
+            }
+            var pad = 8 + (it.depth || 0) * 12;
+            var shown = it.title || it.name;
+            var treeOn = docTree() && !state.sortByName;
+            h.push('<div class="proc-item form-el" data-line="', it.line, '" data-id="', esc(it.id || ''),
+                   '" data-idx="', j, '" data-name="', esc((it.name + ' ' + (it.title || '') + ' ' + (it.tag || '')).toLowerCase()),
+                   '" style="padding-left:', pad, 'px">');
+            if (treeOn && it.hasChildren) {
+                var closed = !!(it.id && state.outlineCollapsed[it.id]);
+                h.push('<span class="twisty" data-fold="', esc(it.id || ''), '">', closed ? '\u25B8' : '\u25BE', '</span>');
+            } else if (treeOn) {
+                h.push('<span class="twisty-ph"></span>');
+            }
+            if (iconCh) h.push('<span class="icon ', iconCls, '">', iconCh, '</span>');
+            else h.push('<svg class="tb-icon outline-icon ', iconCls, '"><use href="#i-', iconName, '"></use></svg>');
+            h.push('<span class="name">', esc(shown), '</span>');
+            if (it.title && it.name && it.title !== it.name)
+                h.push('<span class="name-sub">', esc(it.name), '</span>');
+            h.push('<span class="line-num">', it.line, '</span></div>');
         } else {
             h.push('<div class="proc-item" data-line="', it.line, '" data-name="', esc(it.name.toLowerCase()), '">',
                    '<span class="icon ', (it.type === 'func' ? 'icon-func">F' : 'icon-proc">P'), '</span>',
@@ -1104,28 +1285,39 @@ function renderOutline() {
     }
     document.getElementById('outline-list').innerHTML = h.join('');
     applyFilter();
+    if (isDocPreview() && state.formSelectedId) highlightFormOutline(state.formSelectedId);
 }
 
 function applyFilter() {
     var v = document.getElementById('outline-filter').value.toLowerCase();
     document.getElementById('filter-clear').style.display = v ? 'block' : 'none';
-    var ps = document.querySelectorAll('.proc-item');
+    var filtering = !!v;
+    var treeView = (docTree() && !state.sortByName && !filtering) ? previewView() : null;
+    var foldOn = !!(treeView && treeView.outlineHidden);
+    var ps = document.querySelectorAll('#outline-list .proc-item');
     for (var k = 0; k < ps.length; k++) {
-        ps[k].style.display = (!v || ps[k].getAttribute('data-name').indexOf(v) >= 0) ? '' : 'none';
+        var match = !v || (ps[k].getAttribute('data-name') || '').indexOf(v) >= 0;
+        var hidden = false;
+        if (foldOn && ps[k].classList.contains('form-el')) {
+            var idx = parseInt(ps[k].getAttribute('data-idx'), 10);
+            hidden = treeView.outlineHidden(allItems, idx, state.outlineCollapsed);
+        }
+        ps[k].style.display = (match && !hidden) ? '' : 'none';
     }
 }
 
 // ----------------------------------------------------------------- chrome
 
 function applyTheme() {
-    var name = state.isDark ? 'bsl-dark' : 'bsl-light';
-    document.documentElement.className = state.isDark ? 'theme-dark' : 'theme-light';
+    var dk = uiIsDark();
+    var name = dk ? 'bsl-dark' : 'bsl-light';
+    document.documentElement.className = dk ? 'theme-dark' : 'theme-light';
     /* Bounce through the built-in theme so Monaco rebuilds its token
      * stylesheet from a known base before our colours replace it. Skip the
      * bounce on the very first paint: create() already used `name`, and an
      * extra vs-dark flash reads as a black screen. */
     if (editor && editor.__bslThemeApplied) {
-        monaco.editor.setTheme(state.isDark ? 'vs-dark' : 'vs');
+        monaco.editor.setTheme(dk ? 'vs-dark' : 'vs');
     }
     monaco.editor.setTheme(name);
     if (editor) {
@@ -1138,51 +1330,55 @@ function applyTheme() {
     send({ cmd: 'theme', dark: !!state.isDark });
 }
 
+function setIcon(id, name) {
+    var use = document.querySelector('#' + id + ' use');
+    if (use) use.setAttribute('href', '#i-' + name);
+}
+
 function applyChrome() {
-    var dk = state.isDark;
+    var dk = uiIsDark();
     var outlinePanel = document.getElementById('outline-panel');
     var outlineToggle = document.getElementById('outline-toggle');
     var isBsl = isBslModule();
+    var isCode = isBslFamily();
+    var formOpen = formPreviewOpen();
 
     outlinePanel.className = dk ? 'dark' : 'light';
-    outlineToggle.className = dk ? 'dark' : 'light';
-    outlineToggle.style.display = isBsl ? '' : 'none';
-    outlinePanel.style.display = isBsl ? 'flex' : 'none';
+    var pv = currentProvider();
+    var tree = docTree();
+    outlineToggle.style.display = (isBsl || pv) ? '' : 'none';
+    outlinePanel.style.display = (isBsl || pv) ? 'flex' : 'none';
+    outlineToggle.title = pv ? pv.outlineTitle : 'Список процедур/функций';
+    document.getElementById('outline-fold').style.display = (isBsl || tree) ? '' : 'none';
+    document.getElementById('outline-unfold').style.display = (isBsl || tree) ? '' : 'none';
+    document.getElementById('outline-fold').title = tree ? 'Свернуть все группы' : 'Свернуть все процедуры и области';
+    document.getElementById('outline-unfold').title = tree ? 'Развернуть все группы' : 'Развернуть все процедуры и области';
 
     var ot = document.getElementById('outline-top');
     ot.classList.remove('dark', 'light');
     ot.classList.add(dk ? 'dark' : 'light');
 
-    var btns = document.querySelectorAll('.tb-btn');
-    for (var i = 0; i < btns.length; i++) {
-        if (!btns[i].classList.contains('active') && !btns[i].classList.contains('save-ok') && !btns[i].classList.contains('save-err')) {
-            btns[i].classList.remove('dark', 'light');
-            btns[i].classList.add(dk ? 'dark' : 'light');
-        }
-    }
-
-    document.getElementById('btn-theme').innerHTML = dk ? '\u263E Темная' : '\u2600 Светлая';
+    setIcon('btn-theme', dk ? 'sun' : 'moon');
+    document.getElementById('btn-theme').title = formOpen ? 'У макета формы всегда светлая тема' : 'Переключить тему';
+    document.getElementById('btn-theme').style.display = formOpen ? 'none' : '';
 
     var mapBtn = document.getElementById('btn-minimap');
-    mapBtn.innerHTML = state.minimap ? '\u25A3 \u041a\u0430\u0440\u0442\u0430' : '\u25A2 \u041a\u0430\u0440\u0442\u0430';
-    mapBtn.title = state.minimap ? '\u0421\u043a\u0440\u044b\u0442\u044c \u043a\u0430\u0440\u0442\u0443 \u043a\u043e\u0434\u0430' : '\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u043a\u0430\u0440\u0442\u0443 \u043a\u043e\u0434\u0430';
+    mapBtn.classList.toggle('active', !!state.minimap);
+    mapBtn.title = state.minimap ? 'Скрыть карту кода' : 'Показать карту кода';
 
     var btnEdit = document.getElementById('btn-edit');
     var btnSave = document.getElementById('btn-save');
-    if (state.isEditing) {
-        btnEdit.innerHTML = '&#9998; Просмотр';
-        btnEdit.title = 'Режим просмотра (Ctrl+E)';
-    } else {
-        btnEdit.innerHTML = '&#9998; Редактирование';
-        btnEdit.title = 'Редактировать (Ctrl+E)';
-    }
+    setIcon('btn-edit', state.isEditing ? 'eye' : 'pencil');
+    btnEdit.title = state.isEditing ? 'Режим просмотра (Ctrl+E)' : 'Редактировать (Ctrl+E)';
     btnEdit.classList.toggle('active', state.isEditing);
     btnSave.style.display = state.isEditing ? '' : 'none';
     document.getElementById('btn-format').style.display = (state.isEditing && isBslModule()) ? '' : 'none';
-    document.getElementById('btn-comment').style.display = state.isEditing ? '' : 'none';
+    document.getElementById('btn-comment').style.display = (state.isEditing && isCode) ? '' : 'none';
 
-    var canPreview = (state.language === 'markdown' || state.language === 'html');
+    setIcon('btn-preview', state.previewMode ? 'code' : 'eye');
+    var canPreview = canPreviewLang();
     document.getElementById('btn-preview').style.display = canPreview ? '' : 'none';
+    document.getElementById('btn-minimap').style.display = (isDocPreview() && state.previewMode) ? 'none' : '';
 }
 
 function toggleMinimap() {
@@ -1210,10 +1406,11 @@ function setEditing(on) {
         tabCompletion: snip ? 'on' : 'off',
         snippetSuggestions: snip ? 'inline' : 'none'
     });
+    if (isDocPreview()) setPreviewMode(!on);
     applyChrome();
     applyPreviewEditable();
-    if (state.isEditing && state.previewMode) focusPreview();
-    else editor.focus();
+    if (state.isEditing && state.previewMode && !isDocPreview()) focusPreview();
+    else if (editor) editor.focus();
 }
 
 function hideSavePrompt() {
@@ -1250,7 +1447,7 @@ function applyRevert(content) {
         syncPreviewFromEditor();
         if (typeof syncHighlightFromEditor === 'function') syncHighlightFromEditor();
     }
-    if (state.language === 'bsl') { parseOutline(); renderOutline(); }
+    refreshOutline();
     updateStatusBar();
 }
 
@@ -1287,7 +1484,7 @@ function formatDocument() {
 }
 
 function toggleLineComment() {
-    if (!state.isEditing || !editor) return;
+    if (!state.isEditing || !isBslFamily() || !editor) return;
     editor.trigger('bsl', 'editor.action.commentLine');
     editor.focus();
 }
@@ -1495,7 +1692,12 @@ function previewWin() {
 }
 
 function applyPreviewTheme() {
-    if (!state.previewMode || state.language !== 'markdown') return;
+    if (!state.previewMode) return;
+    if (isDocPreview()) {
+        refreshDocPreview();
+        return;
+    }
+    if (state.language !== 'markdown') return;
     var doc = previewFrame().contentDocument;
     if (!doc) return;
     var st = doc.querySelector('style');
@@ -1510,14 +1712,125 @@ function schedulePreviewRefresh() {
         previewTimer = null;
         if (previewHasFocus()) return;
         refreshPreviewContent();
+        if (isDocPreview()) return;
         applyPreviewEditable();
         syncPreviewFromEditor();
         syncHighlightFromEditor();
     }, 120);
 }
 
+/* Draws the active provider's document into the preview host. The content can
+ * stop being a form or a template while it is edited, so the provider is
+ * re-detected on every refresh; the message shown when nothing claims it any
+ * more keeps the wording of the provider that was active. */
+function refreshDocPreview() {
+    var host = formPreviewEl();
+    var was = currentProvider();
+    if (!host || !model || !was) return;
+    var src = model.getValue();
+    var p = detectProvider(src);
+    state.previewId = p ? p.id : '';
+    if (!p) {
+        // Editing can turn a previewable document into ordinary XML. Leave
+        // preview mode immediately so the user always has a visible editor
+        // and a button to switch back after the provider disappears.
+        setPreviewMode(false);
+        return;
+    }
+    var parsed = p.parse(src);
+    if (parsed.error) {
+        showPreviewMessage(host, p, parsed.error);
+        return;
+    }
+    window[p.viewer].render(parsed.model, host, { onSelect: onDocPreviewSelect });
+}
+
+function showPreviewMessage(host, provider, text) {
+    host.className = provider.rootCls;
+    host.innerHTML = '<div class="' + provider.emptyCls + '">' + esc(text) + '</div>';
+}
+
+/* Clicking an element in the rendered document jumps the editor to the source
+ * line behind it and selects the matching outline row. */
+function onDocPreviewSelect(item) {
+    var p = currentProvider();
+    if (!item || !editor || !p) return;
+    if (!allItems.length) {
+        parseDocOutline();
+        renderOutline();
+    }
+    var view = window[p.viewer];
+    var id = view.itemKey(item);
+    var line = 1;
+    for (var i = 0; i < allItems.length; i++) {
+        if (allItems[i].id === id || (p.selectMatchesByName && allItems[i].name === item.name)) {
+            line = allItems[i].line;
+            break;
+        }
+    }
+    /* Template parameters have no outline entry of their own, so fall back to
+     * finding the parameter name in the source. */
+    if (line === 1 && p.selectMatchesByName && item.parameter) {
+        var found = model.getValue().split(/\r?\n/);
+        for (var k = 0; k < found.length; k++) {
+            if (found[k].indexOf('>' + item.name + '<') >= 0 || found[k].indexOf('<parameter>' + item.name + '</parameter>') >= 0) {
+                line = k + 1;
+                break;
+            }
+        }
+    }
+    editor.revealLineInCenter(line);
+    editor.setPosition({ lineNumber: line, column: 1 });
+    highlightFormOutline(id);
+    /* The form preview marks its own selection on click; the spreadsheet one
+     * has to be told. */
+    if (p.selectHighlightsPreview && view.highlight) view.highlight(formPreviewEl(), id);
+}
+
+function highlightFormOutline(id) {
+    state.formSelectedId = id ? String(id) : '';
+    var treeView = docTree() ? previewView() : null;
+    if (treeView && treeView.outlineExpandTo && treeView.outlineExpandTo(allItems, id, state.outlineCollapsed)) {
+        renderOutline();
+        return;
+    }
+    var rows = document.querySelectorAll('.proc-item.form-el');
+    var hit = null;
+    for (var r = 0; r < rows.length; r++) {
+        var on = rows[r].getAttribute('data-id') === state.formSelectedId;
+        rows[r].classList.toggle('selected', on);
+        rows[r].style.background = '';
+        if (on) hit = rows[r];
+    }
+    if (hit && hit.scrollIntoView) {
+        try { hit.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+        catch (e) { hit.scrollIntoView(); }
+    }
+}
+
+function hideFormPreview() {
+    var host = formPreviewEl();
+    if (!host) return;
+    host.style.display = 'none';
+    host.hidden = true;
+    host.innerHTML = '';
+}
+
 function refreshPreviewContent() {
     if (!state.previewMode || !model) return;
+    /* Either a provider already owns the view, or one claims the new content. */
+    var p = currentProvider() || detectProvider(model.getValue());
+    if (p) {
+        var wasId = state.previewId;
+        state.previewId = p.id;
+        refreshDocPreview();
+        parseDocOutline();
+        renderOutline();
+        /* Editing can turn a form into a template and back, and the outline
+         * titles and fold buttons belong to the provider, not to the file. */
+        if (state.previewId !== wasId) applyChrome();
+        return;
+    }
     var frame = previewFrame();
     var doc = frame.contentDocument;
     if (state.language === 'markdown' && doc) {
@@ -1532,18 +1845,34 @@ function refreshPreviewContent() {
 
 function setPreviewMode(on) {
     var frame = previewFrame();
+    var formEl = formPreviewEl();
     var editorEl = document.getElementById('editor');
     var handle = document.getElementById('preview-handle');
     var btn = document.getElementById('btn-preview');
     var apply = function () {
         state.previewMode = on;
         if (on) {
-            editorEl.style.display = '';
-            handle.style.display = 'block';
-            frame.style.display = 'block';
             btn.classList.add('active');
-            btn.title = 'Скрыть превью';
-            frame.srcdoc = buildPreviewDoc();
+            if (isDocPreview()) {
+                editorEl.style.display = 'none';
+                editorEl.style.width = '';
+                editorEl.style.flex = '';
+                handle.style.display = 'none';
+                frame.style.display = 'none';
+                frame.removeAttribute('srcdoc');
+                formEl.hidden = false;
+                formEl.style.display = 'flex';
+                formEl.style.flex = '1';
+                btn.title = 'Показать исходник';
+                refreshDocPreview();
+            } else {
+                hideFormPreview();
+                editorEl.style.display = '';
+                handle.style.display = 'block';
+                frame.style.display = 'block';
+                frame.srcdoc = buildPreviewDoc();
+                btn.title = 'Скрыть превью';
+            }
             if (editor) editor.layout();
             applyPreviewEditable();
         } else {
@@ -1551,13 +1880,16 @@ function setPreviewMode(on) {
             handle.style.display = 'none';
             frame.style.display = 'none';
             frame.removeAttribute('srcdoc');
+            hideFormPreview();
             editorEl.style.display = '';
             editorEl.style.flex = '1';
             editorEl.style.width = '';
             btn.classList.remove('active');
-            btn.title = 'Исходник и просмотр';
+            var shown = currentProvider();
+            btn.title = shown ? shown.sourceTitle : 'Исходник и просмотр';
             if (editor) editor.layout();
         }
+        applyTheme();
     };
     if (on && (state.language === 'markdown' || state.language === 'html'))
         loadPreviewDeps().then(apply);
@@ -2244,32 +2576,111 @@ function wirePreviewScroll() {
 
 // --------------------------------------------------------------------- PDF
 
-function preparePrintContent() {
-    var root = document.getElementById('print-root');
+function printFrame() { return document.getElementById('print-frame'); }
+
+function printCss() {
+    return 'html,body{margin:0;padding:16px 22px;background:#fff;color:#000;'
+         + 'font-family:Segoe UI,Arial,sans-serif;font-size:11pt;line-height:1.5}'
+         + 'pre{white-space:pre-wrap;word-wrap:break-word;'
+         + 'font-family:Consolas,\'Courier New\',monospace;font-size:11pt;margin:0}'
+         + '.md-body{font-family:Segoe UI,Arial,sans-serif;font-size:11pt;max-width:100%}'
+         + '.md-body pre{background:#f6f8fa;padding:8px;border-radius:4px}'
+         + '.md-body code{font-family:Consolas,monospace}'
+         + '.md-body h1,.md-body h2,.md-body h3{border-bottom:1px solid #ddd;padding-bottom:4px}'
+         + '.md-body table{border-collapse:collapse}'
+         + '.md-body td,.md-body th{border:1px solid #999;padding:3px 6px}'
+         + 'img{max-width:100%}'
+         + '.tp-root{background:#fff;color:#000}'
+         + '.tp-scroll{overflow:visible}'
+         + '.tp-sheet{display:flex;align-items:flex-start}'
+         + '.tp-left{flex:0 0 auto;display:flex;flex-direction:column;background:#ececec}'
+         + '.tp-left-body{display:flex}'
+         + '.tp-right{flex:0 0 auto}'
+         + '.tp-areas{width:92px;flex:0 0 92px;background:#f3f3f3;border-right:1px solid #c8c8c8;font:11px Segoe UI,sans-serif}'
+         + '.tp-area-label{border-top:1px solid #e14c4c;padding:2px 4px;overflow:hidden}'
+         + '.tp-rowhead{width:32px;flex:0 0 32px;background:#ececec;text-align:center;font:10px Segoe UI,sans-serif}'
+         + '.tp-grid{border-collapse:collapse;table-layout:fixed;font-family:Arial,sans-serif}'
+         + '.tp-grid td,.tp-grid th{border:1px solid #ccc;padding:0 2px;vertical-align:top}'
+         + '.tp-grid th{background:#ececec;font:10px Segoe UI,sans-serif}'
+         + '.tp-param{color:#7a2e00}'
+         + '.tp-drawings{position:relative}'
+         + '.tp-drawing{position:absolute}';
+}
+
+// The PDF export renders through #print-frame, a sandboxed iframe with no
+// allow-scripts: the file being viewed is untrusted input, and this is the
+// one path (unlike the read-only preview pane) that used to inject it as
+// raw HTML into the viewer's own document. `done` fires only once the new
+// srcdoc has actually loaded, so the native PrintToPdf call that follows
+// never captures stale or blank content.
+function preparePrintContent(done) {
+    var frame = printFrame();
     var content = model.getValue();
-    if (state.previewMode && state.language === 'markdown') {
-        root.innerHTML = '<div class="md-body">' + renderMarkdown(content) + '</div>';
+    var body;
+    if (state.previewMode && isDocPreview() && formPreviewEl()) {
+        body = '<div class="md-body">' + formPreviewEl().innerHTML + '</div>';
+    } else if (state.previewMode && state.language === 'markdown') {
+        body = '<div class="md-body">' + renderMarkdown(content) + '</div>';
     } else if (state.previewMode && state.language === 'html') {
-        root.innerHTML = '<div class="md-body">' + content + '</div>';
+        body = '<div class="md-body">' + content + '</div>';
     } else {
-        root.innerHTML = '<pre>' + esc(content) + '</pre>';
+        body = '<pre>' + esc(content) + '</pre>';
     }
+    var onLoad = function () {
+        frame.removeEventListener('load', onLoad);
+        // An iframe with height:auto keeps its small CSS/layout viewport when
+        // it is printed. Expand it to the document's actual height first, so
+        // PrintToPdf captures every line and lets the print engine paginate.
+        var doc = frame.contentDocument;
+        var height = doc && doc.documentElement && doc.body
+            ? Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight)
+            : 0;
+        frame.style.height = Math.max(1, height) + 'px';
+        if (done) done();
+    };
+    // Display the frame off-screen while measuring it; a display:none iframe
+    // reports a zero layout height even though its document has content.
+    frame.classList.add('print-me');
+    frame.style.height = '0px';
+    frame.addEventListener('load', onLoad);
+    frame.srcdoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + printCss()
+                 + '</style></head><body>' + body + '</body></html>';
 }
 
 function clearPrintContent() {
-    document.getElementById('print-root').innerHTML = '';
+    var frame = printFrame();
+    frame.removeAttribute('srcdoc');
+    frame.classList.remove('print-me');
+    frame.style.height = '0px';
 }
 
 // ------------------------------------------------------- one-time UI wiring
 
 function wireUi() {
     document.getElementById('outline-list').addEventListener('click', function (e) {
+        var tw = e.target.closest && e.target.closest('.twisty');
+        if (tw && docTree()) {
+            e.preventDefault();
+            e.stopPropagation();
+            var fid = tw.getAttribute('data-fold');
+            if (!fid) return;
+            if (!state.outlineCollapsed) state.outlineCollapsed = {};
+            if (state.outlineCollapsed[fid]) delete state.outlineCollapsed[fid];
+            else state.outlineCollapsed[fid] = true;
+            renderOutline();
+            return;
+        }
         var el = e.target.closest('.proc-item');
         if (!el) return;
         var ln = parseInt(el.getAttribute('data-line'), 10);
         editor.revealLineInCenter(ln);
         editor.setPosition({ lineNumber: ln, column: 1 });
-        editor.focus();
+        var view = previewView();
+        var rowId = el.getAttribute('data-id');
+        if (view && view.highlight && rowId) {
+            view.highlight(formPreviewEl(), rowId);
+            highlightFormOutline(rowId);
+        }
     });
 
     document.getElementById('outline-filter').addEventListener('input', applyFilter);
@@ -2283,8 +2694,24 @@ function wireUi() {
         state.sortByName = !state.sortByName;
         renderOutline();
     });
-    document.getElementById('outline-fold').addEventListener('click', function () { foldAllProcedures(true); });
-    document.getElementById('outline-unfold').addEventListener('click', function () { foldAllProcedures(false); });
+    document.getElementById('outline-fold').addEventListener('click', function () {
+        var collapseView = docTree() ? previewView() : null;
+        if (collapseView && collapseView.outlineCollapseAll) {
+            if (!state.outlineCollapsed) state.outlineCollapsed = {};
+            collapseView.outlineCollapseAll(allItems, state.outlineCollapsed);
+            renderOutline();
+            return;
+        }
+        foldAllProcedures(true);
+    });
+    document.getElementById('outline-unfold').addEventListener('click', function () {
+        if (docTree()) {
+            state.outlineCollapsed = {};
+            renderOutline();
+            return;
+        }
+        foldAllProcedures(false);
+    });
 
     document.getElementById('outline-toggle').addEventListener('click', function () {
         var p = document.getElementById('outline-panel');
@@ -2293,6 +2720,7 @@ function wireUi() {
     });
 
     document.getElementById('btn-theme').addEventListener('click', function () {
+        if (formPreviewOpen()) return;
         state.isDark = !state.isDark;
         applyTheme();
     });
@@ -2311,8 +2739,7 @@ function wireUi() {
     });
     document.getElementById('btn-preview').addEventListener('click', function () { setPreviewMode(!state.previewMode); });
     document.getElementById('btn-pdf').addEventListener('click', function () {
-        preparePrintContent();
-        send({ cmd: 'pdf' });
+        preparePrintContent(function () { send({ cmd: 'pdf' }); });
     });
 
     document.getElementById('preview').addEventListener('load', function () {
@@ -2379,6 +2806,24 @@ function wireUi() {
 }
 
 // ------------------------------------------------------------------ startup
+
+/* Preview-provider selection is the one piece of this file that is pure logic,
+ * and it decides how every file is displayed — so it is exported for
+ * tests/viewer-preview.test.mjs, the way the preview modules export `_test`. */
+window.ViewerInternals = {
+    providers: PREVIEW_PROVIDERS,
+    state: state,
+    detectProvider: detectProvider,
+    providerById: providerById,
+    currentProvider: currentProvider,
+    previewView: previewView,
+    isDocPreview: isDocPreview,
+    isFormView: isFormView,
+    docTree: docTree,
+    formPreviewOpen: formPreviewOpen,
+    canPreviewLang: canPreviewLang,
+    uiIsDark: uiIsDark
+};
 
 function fail(text) {
     var el = document.getElementById('loading');

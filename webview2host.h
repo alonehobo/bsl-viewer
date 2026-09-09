@@ -22,6 +22,7 @@ struct ICoreWebView2Environment;
 
 struct BslLoadRequest {
     std::wstring content;
+    std::wstring objectMeta;
     const char*  language;
     bool         dark;
     int          fontSize;

@@ -11,27 +11,88 @@
 <link rel="preload" as="script" href="vs/editor/editor.main.js">
 </head>
 <body>
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-pdf" viewBox="0 0 24 24"><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M5 12v-7a2 2 0 0 1 2 -2h7l5 5v4" /><path d="M5 18h1.5a1.5 1.5 0 0 0 0 -3h-1.5v6" /><path d="M17 18h2" /><path d="M20 15h-3v6" /><path d="M11 15v6h1a2 2 0 0 0 2 -2v-2a2 2 0 0 0 -2 -2h-1" /></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" /></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" /><path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6" /></symbol>
+  <symbol id="i-map" viewBox="0 0 24 24"><path d="M12 18.5l-3 -1.5l-6 3v-13l6 -3l6 3l6 -3v7.5" /><path d="M9 4v13" /><path d="M15 7v5.5" /><path d="M21.121 20.121a3 3 0 1 0 -4.242 0c.418 .419 1.125 1.045 2.121 1.879c1.051 -.89 1.759 -1.516 2.121 -1.879" /><path d="M19 18v.01" /></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" /><path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" /></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" /></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M7 8l-4 4l4 4" /><path d="M17 8l4 4l-4 4" /><path d="M14 4l-4 16" /></symbol>
+  <symbol id="i-comment" viewBox="0 0 24 24"><path d="M8 9h8" /><path d="M8 13h6" /><path d="M11.012 19.193l-3.012 1.807v-3h-2a3 3 0 0 1 -3 -3v-8a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v6" /><path d="M20 21l2 -2l-2 -2" /><path d="M17 17l-2 2l2 2" /></symbol>
+  <symbol id="i-format" viewBox="0 0 24 24"><path d="M4 6l16 0" /><path d="M4 12l10 0" /><path d="M4 18l14 0" /></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M6 4h10l4 4v10a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2" /><path d="M10 14a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /><path d="M14 4l0 4l-6 0l0 -4" /></symbol>
+  <symbol id="i-outline" viewBox="0 0 24 24"><path d="M9 6h11" /><path d="M12 12h8" /><path d="M15 18h5" /><path d="M5 6v.01" /><path d="M8 12v.01" /><path d="M11 18v.01" /></symbol>
+  <symbol id="i-sort-numbers" viewBox="0 0 24 24"><path d="M4 15l3 3l3 -3" /><path d="M7 6v12" /><path d="M17 3a2 2 0 0 1 2 2v3a2 2 0 1 1 -4 0v-3a2 2 0 0 1 2 -2" /><path d="M15 16a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /><path d="M19 16v3a2 2 0 0 1 -2 2h-1.5" /></symbol>
+  <symbol id="i-sort-letters" viewBox="0 0 24 24"><path d="M15 10v-5c0 -1.38 .62 -2 2 -2s2 .62 2 2v5m0 -3h-4" /><path d="M19 21h-4l4 -7h-4" /><path d="M4 15l3 3l3 -3" /><path d="M7 6v12" /></symbol>
+  <symbol id="i-file-check" viewBox="0 0 24 24"><path d="M14 3v4a1 1 0 0 0 1 1h4" /><path d="M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z" /><path d="M9 15l2 2l4 -4" /></symbol>
+  <symbol id="i-printer" viewBox="0 0 24 24"><path d="M17 17h2a2 2 0 0 0 2 -2v-4a2 2 0 0 0 -2 -2h-14a2 2 0 0 0 -2 2v4a2 2 0 0 0 2 2h2" /><path d="M17 9v-4a2 2 0 0 0 -2 -2h-6a2 2 0 0 0 -2 2v4" /><path d="M7 13h10v8h-10z" /></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><path d="M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" /><path d="M12 17v.01" /><path d="M12 13.5a1.5 1.5 0 0 1 1 -1.5a2.6 2.6 0 1 0 -3 -4" /></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M21 21l-6 -6" /></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14" /><path d="M5 12h14" /></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6l-12 12" /><path d="M6 6l12 12" /></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><path d="M7 7m0 2.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667z" /><path d="M4.012 16.737a2 2 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" /></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 5v14" /><path d="M18 11l-6 -6" /><path d="M6 11l6 -6" /></symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14" /><path d="M18 13l-6 6" /><path d="M6 13l6 6" /></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M5 12h14" /><path d="M5 12l6 6" /><path d="M5 12l6 -6" /></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14" /><path d="M13 18l6 -6" /><path d="M13 6l6 6" /></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" /><path d="M16 3v4" /><path d="M8 3v4" /><path d="M4 11h16" /></symbol>
+  <symbol id="i-dots" viewBox="0 0 24 24"><path d="M5 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M12 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M19 12m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M6 9l6 6l6 -6" /></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M5 4h4l3 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2" /></symbol>
+  <symbol id="i-info-circle" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0" /><path d="M12 9h.01" /><path d="M11 12h1v4h1" /></symbol>
+  <symbol id="i-alert-triangle" viewBox="0 0 24 24"><path d="M12 9v4" /><path d="M10.363 3.591l-8.106 13.534a1.914 1.914 0 0 0 1.636 2.871h16.214a1.914 1.914 0 0 0 1.636 -2.87l-8.106 -13.536a1.914 1.914 0 0 0 -3.274 0z" /><path d="M12 17h.01" /></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><path d="M3 5a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14z" /><path d="M3 10h18" /><path d="M10 3v18" /></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 4h16v2.172a2 2 0 0 1 -.586 1.414l-4.828 4.828a2 2 0 0 0 -.586 1.414v5.172l-4 -2v-3.172a2 2 0 0 0 -.586 -1.414l-4.828 -4.828a2 2 0 0 1 -.586 -1.414v-2.172" /></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4" /><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" /></symbol>
+  <symbol id="i-adjustments" viewBox="0 0 24 24"><path d="M14 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /><path d="M4 6h8" /><path d="M16 6h4" /><path d="M8 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /><path d="M4 12h2" /><path d="M10 12h10" /><path d="M17 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" /><path d="M4 18h11" /><path d="M19 18h1" /></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2z" /><path d="M16 6a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2z" /><path d="M9 18a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6z" /></symbol>
+  <symbol id="i-photo" viewBox="0 0 24 24"><path d="M15 8h.01" /><path d="M3 6a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v12a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3v-12" /><path d="M3 16l5 -5c.928 -.893 2.072 -.893 3 0l5 5" /><path d="M14 14l1 -1c.928 -.893 2.072 -.893 3 0l3 3" /></symbol>
+  <symbol id="i-checkbox" viewBox="0 0 24 24"><path d="M9 11l3 3l8 -8" /><path d="M20 12v6a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h9" /></symbol>
+  <symbol id="i-calculator" viewBox="0 0 24 24"><path d="M4 3m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z" /><path d="M8 7h8" /><path d="M8 11h.01" /><path d="M12 11h.01" /><path d="M16 11h.01" /><path d="M8 15h.01" /><path d="M12 15h.01" /><path d="M16 15h.01" /></symbol>
+  <symbol id="i-arrows-sort" viewBox="0 0 24 24"><path d="M3 9l4 -4l4 4" /><path d="M7 5v14" /><path d="M21 15l-4 4l-4 -4" /><path d="M17 19v-14" /></symbol>
+  <symbol id="i-square" viewBox="0 0 24 24"><path d="M3 3m0 2a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2z" /></symbol>
+  <symbol id="i-barcode" viewBox="0 0 24 24"><path d="M4 7v-1a2 2 0 0 1 2 -2h2" /><path d="M4 17v1a2 2 0 0 0 2 2h2" /><path d="M16 4h2a2 2 0 0 1 2 2v1" /><path d="M16 20h2a2 2 0 0 0 2 -2v-1" /><path d="M5 11h1v2h-1z" /><path d="M10 11v2" /><path d="M14 11h1v2h-1z" /><path d="M19 11v2" /><path d="M8 11v2" /><path d="M12 11v2" /><path d="M17 11v2" /></symbol>
+  <symbol id="i-scale" viewBox="0 0 24 24"><path d="M7 20h10" /><path d="M6 6l6 -1l6 1" /><path d="M12 3v17" /><path d="M9 12l-3 -6l-3 6a3 3 0 0 0 6 0" /><path d="M21 12l-3 -6l-3 6a3 3 0 0 0 6 0" /></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 5a5 5 0 0 1 7 0a5 5 0 0 0 7 0v9a5 5 0 0 1 -7 0a5 5 0 0 0 -7 0v-9" /><path d="M5 21v-7" /></symbol>
+  <symbol id="i-arrow-back-up" viewBox="0 0 24 24"><path d="M9 14l-4 -4l4 -4" /><path d="M5 10h11a4 4 0 1 1 0 8h-1" /></symbol>
+  <symbol id="i-arrow-forward-up" viewBox="0 0 24 24"><path d="M15 14l4 -4l-4 -4" /><path d="M19 10h-11a4 4 0 1 0 0 8h1" /></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9l-8 4.5l-8 -4.5v-9l8 -4.5" /><path d="M12 12l8 -4.5" /><path d="M12 12v9" /><path d="M12 12l-8 -4.5" /></symbol>
+  <symbol id="i-forms" viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0 -3 3v12a3 3 0 0 0 3 3" /><path d="M6 3a3 3 0 0 1 3 3v12a3 3 0 0 1 -3 3" /><path d="M13 7h7a1 1 0 0 1 1 1v8a1 1 0 0 1 -1 1h-7" /><path d="M5 7h-1a1 1 0 0 0 -1 1v8a1 1 0 0 0 1 1h1" /></symbol>
+  <symbol id="i-player-play" viewBox="0 0 24 24"><path d="M7 4v16l13 -8z" /></symbol>
+  <symbol id="i-layout-list" viewBox="0 0 24 24"><path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><path d="M5 6v.01" /><path d="M5 12v.01" /><path d="M5 18v.01" /></symbol>
+  <symbol id="i-click" viewBox="0 0 24 24"><path d="M3 12h3" /><path d="M12 3v3" /><path d="M7.8 7.8l-2.2 -2.2" /><path d="M16.2 7.8l2.2 -2.2" /><path d="M7.8 16.2l-2.2 2.2" /><path d="M12 12l9 3l-4 2l-2 4l-3 -9" /></symbol>
+  <symbol id="i-layout-navbar" viewBox="0 0 24 24"><path d="M4 4m0 2a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2z" /><path d="M4 9h16" /></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M7.5 7.5m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" /><path d="M3 6v5.172a2 2 0 0 0 .586 1.414l7.71 7.71a2.41 2.41 0 0 0 3.408 0l5.592 -5.592a2.41 2.41 0 0 0 0 -3.408l-7.71 -7.71a2 2 0 0 0 -1.414 -.586h-5.172a3 3 0 0 0 -3 3z" /></symbol>
+  <symbol id="i-command" viewBox="0 0 24 24"><path d="M7 9a2 2 0 1 1 -2 -2v10a2 2 0 1 1 2 -2h10a2 2 0 1 1 -2 2v-10a2 2 0 1 1 2 2h-10" /></symbol>
+</svg>
 <div id="loading">Загрузка редактора…</div>
 <div id="main" style="display:none">
+<div id="topbar">
+<button id="btn-save" class="tb-btn" title="Сохранить (Ctrl+S)" style="display:none"><svg class="tb-icon"><use href="#i-save"></use></svg></button>
+<button id="btn-format" class="tb-btn" title="Форматировать документ (Alt+Shift+F)" style="display:none"><svg class="tb-icon"><use href="#i-format"></use></svg></button>
+<button id="btn-comment" class="tb-btn" title="Комментировать строку (Ctrl+/)" style="display:none"><svg class="tb-icon"><use href="#i-comment"></use></svg></button>
+<span class="tb-sep"></span>
+<button id="btn-minimap" class="tb-btn" title="Показать/скрыть карту кода"><svg class="tb-icon"><use href="#i-map"></use></svg></button>
+<span class="tb-sep"></span>
+<button id="btn-theme" class="tb-btn" title="Переключить тему"><svg class="tb-icon"><use href="#i-moon"></use></svg></button>
+<button id="btn-preview" class="tb-btn" title="Исходник и просмотр" style="display:none"><svg class="tb-icon"><use href="#i-eye"></use></svg></button>
+<button id="btn-edit" class="tb-btn" title="Редактировать (Ctrl+E)"><svg class="tb-icon"><use href="#i-pencil"></use></svg></button>
+<span class="tb-sep"></span>
+<button id="btn-pdf" class="tb-btn" title="Экспорт в PDF"><svg class="tb-icon"><use href="#i-pdf"></use></svg></button>
+<span class="tb-sep"></span>
+<button id="outline-toggle" class="tb-btn" title="Структура"><svg class="tb-icon"><use href="#i-outline"></use></svg></button>
+</div>
+<div id="workspace">
 <div id="editor"></div>
 <div id="preview-handle" title="Ширина панелей"></div>
 <iframe id="preview" sandbox="allow-same-origin"></iframe>
-<div id="toolbar">
-<button id="btn-pdf" class="tb-btn" title="Экспорт в PDF">&#128196; PDF</button>
-<button id="btn-edit" class="tb-btn" title="Редактировать (Ctrl+E)">&#9998; Редактирование</button>
-<button id="btn-minimap" class="tb-btn" title="Показать/скрыть карту кода">▣ Карта</button>
-<button id="btn-theme" class="tb-btn" title="Переключить тему">&#9788;</button>
-<button id="btn-preview" class="tb-btn" title="Исходник и просмотр" style="display:none">&#128065; Вид</button>
-<button id="btn-comment" class="tb-btn" title="Комментировать строку (Ctrl+/)" style="display:none">// Коммент</button>
-<button id="btn-format" class="tb-btn" title="Форматировать документ (Alt+Shift+F)" style="display:none">Формат</button>
-<button id="btn-save" class="tb-btn" title="Сохранить (Ctrl+S)" style="display:none">&#128190; Сохранить</button>
-</div>
-<button id="outline-toggle" title="Список процедур/функций">&#9776;</button>
+<div id="form-preview" hidden></div>
 <div id="outline-panel">
   <div id="resize-handle"></div>
   <div id="outline-content">
     <div id="outline-top">
-      <div id="outline-header"><button id="sort-btn"></button><button id="outline-fold" title="Свернуть все процедуры и области">−</button><button id="outline-unfold" title="Развернуть все процедуры и области">+</button><span id="outline-count"></span></div>
+      <div id="outline-header"><button id="sort-btn"><svg class="tb-icon"><use href="#i-sort-numbers"></use></svg></button><button id="outline-fold" title="Свернуть все процедуры и области">−</button><button id="outline-unfold" title="Развернуть все процедуры и области">+</button><span id="outline-count"></span></div>
       <div class="filter-wrap">
         <input id="outline-filter" type="text" placeholder="Фильтр…">
         <button id="filter-clear" title="Очистить">&times;</button>
@@ -41,12 +102,13 @@
   </div>
 </div>
 </div>
+</div>
 <div id="statusbar">
   <span id="sb-pos">Стр 1, Кол 1</span>
   <span id="sb-sel"></span>
   <span id="sb-lines">Строк: 0</span>
 </div>
-<div id="print-root"></div>
+<iframe id="print-frame" sandbox="allow-same-origin"></iframe>
 <div id="save-prompt" hidden>
   <div class="save-prompt-box">
     <div class="save-prompt-msg">Сохранить изменения?</div>
@@ -57,7 +119,11 @@
     </div>
   </div>
 </div>
+<script src="xml-util.js"></script>
 <script src="bsl-format.js"></script>
+<script src="form-preview.js"></script>
+<script src="template-preview.js"></script>
+<script src="mxl-preview.js"></script>
 <script src="viewer.js"></script>
 </body>
 </html>

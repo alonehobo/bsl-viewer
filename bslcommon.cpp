@@ -58,9 +58,14 @@ TextFile ReadTextFile(const wchar_t* path, DWORD maxBytes)
             if (!ReadFile(hFile, data.data() + total, fileSize - total, &got, NULL) || got == 0) break;
             total += got;
         }
-        data.resize(total);
+        CloseHandle(hFile);
+        // A short read (locked region, I/O error, file changed under us) must
+        // not look like success: the caller may write this truncated content
+        // straight back over the original file on the next save.
+        if (total != fileSize) return result;
+    } else {
+        CloseHandle(hFile);
     }
-    CloseHandle(hFile);
 
     // An empty file is a valid, successfully read file.
     result.ok = true;
@@ -203,6 +208,7 @@ const char* MonacoLanguageForPath(const wchar_t* path)
     if (!wcscmp(ext, L"xml"))                              return "xml";
     if (!wcscmp(ext, L"ps1") || !wcscmp(ext, L"psm1") || !wcscmp(ext, L"psd1")) return "powershell";
     if (!wcscmp(ext, L"html") || !wcscmp(ext, L"htm"))     return "html";
+    if (!wcscmp(ext, L"mxl"))                             return "plaintext";
     return "plaintext";
 }
 
@@ -220,4 +226,90 @@ std::wstring ModuleDirectory(HMODULE module)
     size_t slash = path.find_last_of(L"\\/");
     if (slash == std::wstring::npos) return std::wstring();
     return path.substr(0, slash + 1);
+}
+
+static std::wstring PathDirName(const std::wstring& path)
+{
+    size_t slash = path.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return std::wstring();
+    return path.substr(0, slash);
+}
+
+static std::wstring PathBaseName(const std::wstring& path)
+{
+    size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? path : path.substr(slash + 1);
+}
+
+static wchar_t PathSep(const std::wstring& path)
+{
+    if (path.find(L'\\') != std::wstring::npos) return L'\\';
+    if (path.find(L'/') != std::wstring::npos) return L'/';
+    return L'\\';
+}
+
+static bool NameEqualsI(const std::wstring& name, const wchar_t* expect)
+{
+    return _wcsicmp(name.c_str(), expect) == 0;
+}
+
+static bool FileExistsW(const wchar_t* path)
+{
+    if (!path || !*path) return false;
+    DWORD attr = GetFileAttributesW(path);
+    return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+ObjectMetaPaths ObjectMetaCandidates(const wchar_t* formPath)
+{
+    ObjectMetaPaths out;
+    if (!formPath || !*formPath) return out;
+
+    std::wstring path = formPath;
+    while (!path.empty() && (path.back() == L'\\' || path.back() == L'/'))
+        path.pop_back();
+    if (path.empty()) return out;
+
+    if (!NameEqualsI(PathBaseName(path), L"Form.xml")) return out;
+
+    std::wstring extDir = PathDirName(path);
+    if (!NameEqualsI(PathBaseName(extDir), L"Ext")) return out;
+
+    std::wstring formDir = PathDirName(extDir);
+    if (formDir.empty()) return out;
+
+    std::wstring formsDir = PathDirName(formDir);
+    if (!NameEqualsI(PathBaseName(formsDir), L"Forms")) return out;
+
+    std::wstring objectDir = PathDirName(formsDir);
+    std::wstring objectName = PathBaseName(objectDir);
+    if (objectDir.empty() || objectName.empty()) return out;
+
+    wchar_t sep = PathSep(path);
+    std::wstring parent = PathDirName(objectDir);
+    out.sibling = parent.empty() ? objectName + L".xml"
+                                 : parent + sep + objectName + L".xml";
+    out.nested = objectDir + sep + objectName + L".xml";
+    return out;
+}
+
+std::wstring FindObjectMetaFile(const wchar_t* formPath)
+{
+    ObjectMetaPaths c = ObjectMetaCandidates(formPath);
+    if (!c.sibling.empty() && FileExistsW(c.sibling.c_str())) return c.sibling;
+    if (!c.nested.empty() && FileExistsW(c.nested.c_str())) return c.nested;
+    return std::wstring();
+}
+
+std::wstring LoadObjectMetaForForm(const wchar_t* formPath, DWORD maxBytes)
+{
+    std::wstring metaPath = FindObjectMetaFile(formPath);
+    if (metaPath.empty()) return std::wstring();
+    if (_wcsicmp(metaPath.c_str(), formPath) == 0) return std::wstring();
+
+    TextFile file = ReadTextFile(metaPath.c_str(), maxBytes);
+    if (!file.ok || file.text.empty()) return std::wstring();
+    if (file.text.find(L"MetaDataObject") == std::wstring::npos)
+        return std::wstring();
+    return file.text;
 }

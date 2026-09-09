@@ -130,7 +130,7 @@ if (-not (Test-Path -LiteralPath $pluginIni)) {
     $defaults = @(
         @{ Section = 'Options';    Key = 'MaxFileSizeMB';  Value = '64'; Comment = '; Files larger than this are left to the built-in viewer' },
         @{ Section = 'Options';    Key = 'KeepWarm';       Value = '1';  Comment = '; Keep one WebView2 instance resident between files' },
-        @{ Section = 'Extensions'; Key = 'TextExtensions'; Value = 'md;markdown;json;xml;ps1;psm1;psd1;html;htm'; Comment = '; Other text/code extensions' }
+        @{ Section = 'Extensions'; Key = 'TextExtensions'; Value = 'md;markdown;json;xml;ps1;psm1;psd1;html;htm;mxl'; Comment = '; Other text/code extensions' }
     )
     foreach ($d in $defaults) {
         if ($existing -match "^\s*$($d.Key)\s*=") { continue }
@@ -171,7 +171,7 @@ function Get-DetectString([string] $iniPath) {
     $all = @()
     $all += (& $get 'Extensions' 'BSLExtensions' 'bsl;os')
     $all += (& $get 'Extensions' 'QueryExtensions' 'sdbl;query')
-    $all += (& $get 'Extensions' 'TextExtensions' 'md;markdown;json;xml;ps1;psm1;psd1;html;htm')
+    $all += (& $get 'Extensions' 'TextExtensions' 'md;markdown;json;xml;ps1;psm1;psd1;html;htm;mxl')
     $parts = $all -join ';' -split ';' | Where-Object { $_ } | ForEach-Object { 'EXT="' + $_.ToUpper() + '"' }
     return '"' + ($parts -join ' | ') + '"'
 }

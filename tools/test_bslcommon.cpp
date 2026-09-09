@@ -137,6 +137,73 @@ int main()
         Check(JsonEscape(astral) == astral, "surrogate pair passes through untouched");
     }
 
+    printf("\n== object meta path for Form.xml ==\n");
+    {
+        ObjectMetaPaths cat = ObjectMetaCandidates(
+            L"E:\\cf\\Catalogs\\Partners\\Forms\\ItemForm\\Ext\\Form.xml");
+        Check(cat.sibling == L"E:\\cf\\Catalogs\\Partners.xml",
+              "catalog form -> sibling Partners.xml");
+        Check(cat.nested == L"E:\\cf\\Catalogs\\Partners\\Partners.xml",
+              "catalog form -> nested Partners/Partners.xml");
+
+        ObjectMetaPaths ext = ObjectMetaCandidates(
+            L"C:/src/CostReport2025/Forms/ReportForm/Ext/Form.xml");
+        Check(ext.sibling == L"C:\\src\\CostReport2025.xml"
+              || ext.sibling == L"C:/src/CostReport2025.xml",
+              "external report form -> sibling xml (slash-preserving)");
+        Check(ext.nested.find(L"CostReport2025") != std::wstring::npos
+              && ext.nested.find(L"CostReport2025.xml") != std::wstring::npos,
+              "external report form -> nested xml");
+
+        ObjectMetaPaths bare = ObjectMetaCandidates(L"Form.xml");
+        Check(bare.sibling.empty() && bare.nested.empty(),
+              "bare Form.xml is not a dump path");
+
+        ObjectMetaPaths notForm = ObjectMetaCandidates(
+            L"E:\\cf\\Catalogs\\Partners.xml");
+        Check(notForm.sibling.empty(), "object xml itself is not a form path");
+
+        ObjectMetaPaths formMeta = ObjectMetaCandidates(
+            L"E:\\cf\\Catalogs\\Partners\\Forms\\ItemForm.xml");
+        Check(formMeta.sibling.empty(), "Forms\\ItemForm.xml is not Ext\\Form.xml");
+    }
+
+    printf("\n== object meta file lookup ==\n");
+    {
+        std::wstring root = TempFilePath(L"bslview_meta_lookup");
+        std::wstring objDir = root + L"\\ExtReport";
+        std::wstring formDir = objDir + L"\\Forms\\ReportForm\\Ext";
+        std::wstring formXml = formDir + L"\\Form.xml";
+        std::wstring sibling = root + L"\\ExtReport.xml";
+
+        CreateDirectoryW(root.c_str(), NULL);
+        CreateDirectoryW(objDir.c_str(), NULL);
+        CreateDirectoryW((objDir + L"\\Forms").c_str(), NULL);
+        CreateDirectoryW((objDir + L"\\Forms\\ReportForm").c_str(), NULL);
+        CreateDirectoryW(formDir.c_str(), NULL);
+
+        WriteRaw(formXml, "<Form/>", 7);
+        Check(FindObjectMetaFile(formXml.c_str()).empty(),
+              "no companion xml -> empty");
+
+        const char meta[] = "<?xml version=\"1.0\"?><MetaDataObject><ExternalReport/></MetaDataObject>";
+        WriteRaw(sibling, meta, sizeof(meta) - 1);
+        Check(FindObjectMetaFile(formXml.c_str()) == sibling,
+              "finds sibling ExtReport.xml for external object");
+
+        std::wstring loaded = LoadObjectMetaForForm(formXml.c_str(), 0);
+        Check(loaded.find(L"MetaDataObject") != std::wstring::npos,
+              "loads companion MetaDataObject");
+
+        DeleteFileW(sibling.c_str());
+        DeleteFileW(formXml.c_str());
+        RemoveDirectoryW(formDir.c_str());
+        RemoveDirectoryW((objDir + L"\\Forms\\ReportForm").c_str());
+        RemoveDirectoryW((objDir + L"\\Forms").c_str());
+        RemoveDirectoryW(objDir.c_str());
+        RemoveDirectoryW(root.c_str());
+    }
+
     printf("\n== language mapping ==\n");
     {
         Check(!strcmp(MonacoLanguageForPath(L"a\\b\\Module.bsl"), "bsl"), ".bsl -> bsl");
@@ -146,6 +213,7 @@ int main()
         Check(!strcmp(MonacoLanguageForPath(L"readme.md"), "markdown"), ".md -> markdown");
         Check(!strcmp(MonacoLanguageForPath(L"data.json"), "json"), ".json -> json");
         Check(!strcmp(MonacoLanguageForPath(L"meta.XML"), "xml"), ".xml is case-insensitive");
+        Check(!strcmp(MonacoLanguageForPath(L"print.mxl"), "plaintext"), ".mxl is plaintext source");
         Check(!strcmp(MonacoLanguageForPath(L"noext"), "plaintext"), "no extension -> plaintext");
         Check(!strcmp(MonacoLanguageForPath(L"weird.zzz"), "plaintext"), "unknown -> plaintext");
     }

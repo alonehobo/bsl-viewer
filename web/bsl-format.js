@@ -2,18 +2,18 @@
 (function (global) {
 'use strict';
 const START_WORDS = [
-    'если', '#если', 'для', 'пока', 'функция', 'процедура', 'попытка',
-    'if', '#if', 'for', 'while', 'function', 'procedure', 'try'
+    'если', 'для', 'пока', 'функция', 'процедура', 'попытка',
+    'if', 'for', 'while', 'function', 'procedure', 'try'
 ];
 
 const STOP_WORDS = [
-    'конецесли', '#конецесли', 'конеццикла', 'конецфункции', 'конецпроцедуры', 'конецпопытки',
-    'endif', '#endif', 'enddo', 'endfunction', 'endprocedure', 'endtry'
+    'конецесли', 'конеццикла', 'конецфункции', 'конецпроцедуры', 'конецпопытки',
+    'endif', 'enddo', 'endfunction', 'endprocedure', 'endtry'
 ];
 
 const COMPLEX_WORDS = [
-    'исключение', 'иначе', 'иначеесли', '#иначе', '#иначеесли',
-    'except', 'else', 'elseif', 'elsif', '#else', '#elseif', '#elsif'
+    'исключение', 'иначе', 'иначеесли',
+    'except', 'else', 'elseif', 'elsif'
 ];
 
 const CONTROL_FLOW_MARKERS = {
@@ -155,6 +155,10 @@ function getStructuralWords(line, mask) {
 }
 
 function getStructureChange(line, mask) {
+    // Preprocessor lines (#Если, #Область, #Вставка, …) do not create indent levels.
+    if ((line.trimStart()[0] || '') == '#')
+        return { before: 0, after: 0 };
+
     const words = getStructuralWords(line, mask);
     const firstWord = words.length ? words[0] : '';
     const closes = STOP_WORDS.includes(firstWord);

@@ -161,14 +161,16 @@ std::wstring UserDataFolder()
 
 // --- COM callback shims ----------------------------------------------------
 
-class EnvCompletedHandler : public ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler {
-    long mRef;
+/* Every WebView2 callback below is a single-method COM object with the same
+ * IUnknown: one ref count, and a QueryInterface answering for IUnknown and for
+ * the one interface it implements. The interface type supplies both, so each
+ * handler only has to write Invoke. */
+template <class I>
+class ComCallback : public I {
 public:
-    EnvCompletedHandler() : mRef(1) {}
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) {
-        if (IsEqualIID(riid, IID_IUnknown) ||
-            IsEqualIID(riid, __uuidof(ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler))) {
-            *ppv = static_cast<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler*>(this);
+        if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, __uuidof(I))) {
+            *ppv = static_cast<I*>(this);
             AddRef();
             return S_OK;
         }
@@ -178,6 +180,28 @@ public:
     STDMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&mRef); }
     STDMETHODIMP_(ULONG) Release() { long r = InterlockedDecrement(&mRef); if (!r) delete this; return r; }
 
+protected:
+    ComCallback() : mRef(1) {}
+    virtual ~ComCallback() {}
+
+private:
+    long mRef;
+};
+
+/* Callbacks that act on one host hold it as a raw pointer: the caller AddRefs
+ * the host before handing the callback to WebView2 and the Invoke body releases
+ * it, so the host outlives the callback by construction. */
+template <class I>
+class HostCallback : public ComCallback<I> {
+public:
+    explicit HostCallback(CWebView2Host* host) : mHost(host) {}
+
+protected:
+    CWebView2Host* mHost;
+};
+
+class EnvCompletedHandler : public ComCallback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler> {
+public:
     STDMETHODIMP Invoke(HRESULT hr, ICoreWebView2Environment* env) {
         g_envPending = false;
         if (SUCCEEDED(hr) && env) {
@@ -216,24 +240,10 @@ public:
     }
 };
 
-class CtrlCompletedHandler : public ICoreWebView2CreateCoreWebView2ControllerCompletedHandler {
-    long mRef;
-    CWebView2Host* mHost;
+class CtrlCompletedHandler : public HostCallback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler> {
+    typedef HostCallback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler> Base;
 public:
-    CtrlCompletedHandler(CWebView2Host* host) : mRef(1), mHost(host) {}
-    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) {
-        if (IsEqualIID(riid, IID_IUnknown) ||
-            IsEqualIID(riid, __uuidof(ICoreWebView2CreateCoreWebView2ControllerCompletedHandler))) {
-            *ppv = static_cast<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *ppv = NULL;
-        return E_NOINTERFACE;
-    }
-    STDMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&mRef); }
-    STDMETHODIMP_(ULONG) Release() { long r = InterlockedDecrement(&mRef); if (!r) delete this; return r; }
-
+    explicit CtrlCompletedHandler(CWebView2Host* host) : Base(host) {}
     STDMETHODIMP Invoke(HRESULT hr, ICoreWebView2Controller* ctrl) {
         mHost->OnControllerCreated(hr, ctrl);
         mHost->Release();   // matches the AddRef taken before creation
@@ -241,24 +251,10 @@ public:
     }
 };
 
-class WebMessageHandler : public ICoreWebView2WebMessageReceivedEventHandler {
-    long mRef;
-    CWebView2Host* mHost;
+class WebMessageHandler : public HostCallback<ICoreWebView2WebMessageReceivedEventHandler> {
+    typedef HostCallback<ICoreWebView2WebMessageReceivedEventHandler> Base;
 public:
-    WebMessageHandler(CWebView2Host* host) : mRef(1), mHost(host) {}
-    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) {
-        if (IsEqualIID(riid, IID_IUnknown) ||
-            IsEqualIID(riid, __uuidof(ICoreWebView2WebMessageReceivedEventHandler))) {
-            *ppv = static_cast<ICoreWebView2WebMessageReceivedEventHandler*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *ppv = NULL;
-        return E_NOINTERFACE;
-    }
-    STDMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&mRef); }
-    STDMETHODIMP_(ULONG) Release() { long r = InterlockedDecrement(&mRef); if (!r) delete this; return r; }
-
+    explicit WebMessageHandler(CWebView2Host* host) : Base(host) {}
     STDMETHODIMP Invoke(ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) {
         LPWSTR raw = NULL;
         if (FAILED(args->get_WebMessageAsJson(&raw)) || !raw) return S_OK;
@@ -269,23 +265,8 @@ public:
     }
 };
 
-class NavigationStartingHandler : public ICoreWebView2NavigationStartingEventHandler {
-    long mRef;
+class NavigationStartingHandler : public ComCallback<ICoreWebView2NavigationStartingEventHandler> {
 public:
-    NavigationStartingHandler() : mRef(1) {}
-    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) {
-        if (IsEqualIID(riid, IID_IUnknown) ||
-            IsEqualIID(riid, __uuidof(ICoreWebView2NavigationStartingEventHandler))) {
-            *ppv = static_cast<ICoreWebView2NavigationStartingEventHandler*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *ppv = NULL;
-        return E_NOINTERFACE;
-    }
-    STDMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&mRef); }
-    STDMETHODIMP_(ULONG) Release() { long r = InterlockedDecrement(&mRef); if (!r) delete this; return r; }
-
     STDMETHODIMP Invoke(ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) {
         LPWSTR uri = NULL;
         if (SUCCEEDED(args->get_Uri(&uri)) && uri) {
@@ -299,71 +280,28 @@ public:
     }
 };
 
-class NewWindowHandler : public ICoreWebView2NewWindowRequestedEventHandler {
-    long mRef;
+class NewWindowHandler : public ComCallback<ICoreWebView2NewWindowRequestedEventHandler> {
 public:
-    NewWindowHandler() : mRef(1) {}
-    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) {
-        if (IsEqualIID(riid, IID_IUnknown) ||
-            IsEqualIID(riid, __uuidof(ICoreWebView2NewWindowRequestedEventHandler))) {
-            *ppv = static_cast<ICoreWebView2NewWindowRequestedEventHandler*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *ppv = NULL;
-        return E_NOINTERFACE;
-    }
-    STDMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&mRef); }
-    STDMETHODIMP_(ULONG) Release() { long r = InterlockedDecrement(&mRef); if (!r) delete this; return r; }
-
     STDMETHODIMP Invoke(ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) {
         args->put_Handled(TRUE);
         return S_OK;
     }
 };
 
-class ProcessFailedHandler : public ICoreWebView2ProcessFailedEventHandler {
-    long mRef;
-    CWebView2Host* mHost;
+class ProcessFailedHandler : public HostCallback<ICoreWebView2ProcessFailedEventHandler> {
+    typedef HostCallback<ICoreWebView2ProcessFailedEventHandler> Base;
 public:
-    ProcessFailedHandler(CWebView2Host* host) : mRef(1), mHost(host) {}
-    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) {
-        if (IsEqualIID(riid, IID_IUnknown) ||
-            IsEqualIID(riid, __uuidof(ICoreWebView2ProcessFailedEventHandler))) {
-            *ppv = static_cast<ICoreWebView2ProcessFailedEventHandler*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *ppv = NULL;
-        return E_NOINTERFACE;
-    }
-    STDMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&mRef); }
-    STDMETHODIMP_(ULONG) Release() { long r = InterlockedDecrement(&mRef); if (!r) delete this; return r; }
-
+    explicit ProcessFailedHandler(CWebView2Host* host) : Base(host) {}
     STDMETHODIMP Invoke(ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs*) {
         mHost->OnProcessFailed();
         return S_OK;
     }
 };
 
-class PdfCompletedHandler : public ICoreWebView2PrintToPdfCompletedHandler {
-    long mRef;
-    CWebView2Host* mHost;
+class PdfCompletedHandler : public HostCallback<ICoreWebView2PrintToPdfCompletedHandler> {
+    typedef HostCallback<ICoreWebView2PrintToPdfCompletedHandler> Base;
 public:
-    PdfCompletedHandler(CWebView2Host* host) : mRef(1), mHost(host) {}
-    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) {
-        if (IsEqualIID(riid, IID_IUnknown) ||
-            IsEqualIID(riid, __uuidof(ICoreWebView2PrintToPdfCompletedHandler))) {
-            *ppv = static_cast<ICoreWebView2PrintToPdfCompletedHandler*>(this);
-            AddRef();
-            return S_OK;
-        }
-        *ppv = NULL;
-        return E_NOINTERFACE;
-    }
-    STDMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&mRef); }
-    STDMETHODIMP_(ULONG) Release() { long r = InterlockedDecrement(&mRef); if (!r) delete this; return r; }
-
+    explicit PdfCompletedHandler(CWebView2Host* host) : Base(host) {}
     STDMETHODIMP Invoke(HRESULT hr, BOOL ok) {
         if (!mHost->mClosed) {
             std::wstring json = L"{\"cmd\":\"pdfDone\",\"ok\":";
@@ -428,6 +366,23 @@ static void EnsureEnvironment()
     }
 }
 
+// WebView2 keeps asynchronous COM callbacks alive until the browser has
+// released them. Pinning the owning module while WebView2 is in use prevents
+// Total Commander from unloading the DLL underneath one of those callbacks.
+// The pin is released by the OS at process exit, when DllMain receives the
+// reserved=true detach notification and no callback can run afterward.
+static void PinModule()
+{
+    static bool pinned = false;
+    if (pinned) return;
+    HMODULE module = NULL;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                           GET_MODULE_HANDLE_EX_FLAG_PIN,
+                           reinterpret_cast<LPCWSTR>(&PinModule), &module)) {
+        pinned = true;
+    }
+}
+
 HRESULT CWebView2Host::LastError()
 {
     return g_lastEnvHr;
@@ -435,6 +390,7 @@ HRESULT CWebView2Host::LastError()
 
 void CWebView2Host::WarmUp(const std::wstring& webRoot, bool keepWarm)
 {
+    PinModule();
     g_keepWarm = keepWarm;
     if (g_warmWebRoot.empty()) g_warmWebRoot = webRoot;
 
@@ -749,7 +705,13 @@ void CWebView2Host::Load(const BslLoadRequest& req)
     json += req.readOnly ? L"true" : L"false";
     json += L",\"content\":\"";
     json += JsonEscape(req.content);
-    json += L"\"}";
+    json += L"\"";
+    if (!req.objectMeta.empty()) {
+        json += L",\"objectMeta\":\"";
+        json += JsonEscape(req.objectMeta);
+        json += L"\"";
+    }
+    json += L"}";
 
     if (mPageReady) {
         PostJson(json);

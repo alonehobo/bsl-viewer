@@ -40,4 +40,18 @@ std::wstring ModuleDirectory(HMODULE module);
 std::wstring Utf8ToWide(const char* s, int len);
 std::wstring AnsiToWide(const char* s);
 
+// EDT / Configurator dump of a managed form:
+//   <ObjectName>/Forms/<FormName>/Ext/Form.xml
+// Companion metadata XML (catalog, document, external report/processor, …):
+//   sibling  <ObjectName>.xml next to the object folder
+//   nested   <ObjectName>/<ObjectName>.xml
+struct ObjectMetaPaths {
+    std::wstring sibling;
+    std::wstring nested;
+};
+
+ObjectMetaPaths ObjectMetaCandidates(const wchar_t* formPath);
+std::wstring FindObjectMetaFile(const wchar_t* formPath);
+std::wstring LoadObjectMetaForForm(const wchar_t* formPath, DWORD maxBytes);
+
 #endif // BSLCOMMON_H

@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <ole2.h>
+#include <string.h>
 #include <string>
 #include <shellapi.h>
 #include <commdlg.h>
@@ -70,13 +71,21 @@ static std::wstring GetFileFromCmdLine()
 static std::wstring GetHkcuDefaultSz(const wchar_t* subkey)
 {
     HKEY hKey = NULL;
-    wchar_t buf[2048] = {};
-    DWORD sz = sizeof(buf);
     if (RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
         return std::wstring();
-    RegQueryValueExW(hKey, NULL, NULL, NULL, (BYTE*)buf, &sz);
+
+    wchar_t buf[2048];
+    DWORD sz = sizeof(buf);
+    DWORD type = 0;
+    LONG rc = RegQueryValueExW(hKey, NULL, NULL, &type, (BYTE*)buf, &sz);
     RegCloseKey(hKey);
-    return buf;
+    if (rc != ERROR_SUCCESS || type != REG_SZ) return std::wstring();
+
+    // RegQueryValueExW does not guarantee NUL-termination when a value fills
+    // the buffer exactly; measure explicitly rather than trust one.
+    size_t chars = sz / sizeof(wchar_t);
+    while (chars > 0 && buf[chars - 1] == L'\0') chars--;
+    return std::wstring(buf, chars);
 }
 
 static void SetHkcuDefaultSz(const wchar_t* subkey, const wchar_t* value)
@@ -100,6 +109,7 @@ static void RegisterFileAssociation()
     const wchar_t* cmdKey = L"Software\\Classes\\BSLEdit.File\\shell\\open\\command";
     const wchar_t* iconKey = L"Software\\Classes\\BSLEdit.File\\DefaultIcon";
     const wchar_t* appCmdKey = L"Software\\Classes\\Applications\\BSLEdit.exe\\shell\\open\\command";
+    const wchar_t* consentKey = L"Software\\BSLEdit\\Assoc";
 
     // Re-write if the ProgId is missing *or* the exe moved. The previous early
     // return on ProgId==BSLEdit.File left Explorer pointing at a stale path,
@@ -108,6 +118,22 @@ static void RegisterFileAssociation()
         GetHkcuDefaultSz(cmdKey) == cmdVal &&
         GetHkcuDefaultSz(appCmdKey) == cmdVal)
         return;
+
+    // Changing HKCU\Classes changes what double-clicking a .bsl/.os file does
+    // system-wide. Ask once and remember the answer instead of writing it
+    // silently on every launch; a later "no" still lets a moved exe fix up
+    // its own command path without asking again.
+    std::wstring consent = GetHkcuDefaultSz(consentKey);
+    if (consent.empty()) {
+        int choice = MessageBoxW(NULL,
+            L"Открывать файлы .bsl и .os в BSLEdit по умолчанию?\n\n"
+            L"Это можно изменить позже в параметрах Windows "
+            L"— «Приложения по умолчанию».",
+            APP_TITLE, MB_YESNO | MB_ICONQUESTION);
+        consent = (choice == IDYES) ? L"1" : L"0";
+        SetHkcuDefaultSz(consentKey, consent.c_str());
+    }
+    if (consent != L"1") return;
 
     const wchar_t* exts[] = { L".bsl", L".os" };
     for (int i = 0; i < 2; i++) {
@@ -130,11 +156,12 @@ static std::wstring OpenFileDialog(HWND hParent)
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = hParent;
     ofn.lpstrFilter =
-        L"Supported files\0*.bsl;*.os;*.sdbl;*.query;*.md;*.markdown;*.json;*.xml;*.ps1;*.psm1;*.psd1;*.html;*.htm\0"
+        L"Supported files\0*.bsl;*.os;*.sdbl;*.query;*.md;*.markdown;*.json;*.xml;*.mxl;*.ps1;*.psm1;*.psd1;*.html;*.htm\0"
         L"BSL files (*.bsl;*.os)\0*.bsl;*.os\0"
         L"Markdown (*.md)\0*.md;*.markdown\0"
         L"JSON (*.json)\0*.json\0"
         L"XML (*.xml)\0*.xml\0"
+        L"MXL (*.mxl)\0*.mxl\0"
         L"PowerShell (*.ps1)\0*.ps1;*.psm1;*.psd1\0"
         L"HTML (*.html)\0*.html;*.htm\0"
         L"All files (*.*)\0*.*\0";
@@ -230,6 +257,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     req.dark     = SystemUsesDarkTheme();
     req.fontSize = 14;
     req.readOnly = false;   // standalone editor opens ready to edit
+    if (req.language && strcmp(req.language, "xml") == 0)
+        req.objectMeta = LoadObjectMetaForForm(filePath.c_str(), MAX_FILE_BYTES);
     g_webView->Load(req);
 
     MSG msg;

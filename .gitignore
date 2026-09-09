@@ -24,3 +24,28 @@ web/turndown.min.js
 dist/
 objtest/
 testdata/scroll-test/
+# Literal %VAR% directories left behind when build scripts run under a shell
+# that does not expand cmd.exe variables (git-bash, WSL).
+%TEMP%/
+%SRC%/
+# Root service folders
+/.agents/
+/.claude/
+/.cursor/
+/.memory/
+/docs/
+/docs-1c-skills/
+/scripts/
+
+# Root service files
+/.cursorignore
+/.dev.env
+/.mcp.json
+/.v8-env.json
+/AGENTS.md
+/CLAUDE.md
+/mcp-settings.json
+/mcp-troubleshooting.md
+
+# Other local tool files
+/opencode.json

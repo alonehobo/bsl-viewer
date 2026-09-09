@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <ole2.h>
+#include <string.h>
 #include <string>
 #include <vector>
 
@@ -59,7 +60,7 @@ static void LoadSettings(bool force)
 
     g_settings.bslExts   = IniStr(L"Extensions", L"BSLExtensions", L"bsl;os");
     g_settings.queryExts = IniStr(L"Extensions", L"QueryExtensions", L"sdbl;query");
-    g_settings.textExts  = IniStr(L"Extensions", L"TextExtensions", L"md;markdown;json;xml;ps1;psm1;psd1;html;htm");
+    g_settings.textExts  = IniStr(L"Extensions", L"TextExtensions", L"md;markdown;json;xml;ps1;psm1;psd1;html;htm;mxl");
     g_settings.loaded = true;
 }
 
@@ -239,8 +240,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
     } else if (reason == DLL_PROCESS_DETACH) {
         // Total Commander unloads idle plugins. Leaving the class registered
         // would leave a stale WndProc pointer behind for the next load.
+        //
+        // CWebView2Host pins this module while WebView2 is in use. Therefore a
+        // normal FreeLibrary cannot reach this path with live COM callbacks;
+        // process exit is the only remaining detach and the OS tears down the
+        // browser after DLL code can no longer be called.
         if (!reserved) {
-            CWebView2Host::Shutdown();
             if (g_wndClass) UnregisterClassW(WNDCLASS_NAME, g_hInst);
         }
     }
@@ -287,6 +292,8 @@ static HWND DoListLoad(HWND parentWin, const wchar_t* fileToLoad, int showFlags)
         req.dark     = st->dark;
         req.fontSize = g_settings.fontSize;
         req.readOnly = true;
+        if (st->language && strcmp(st->language, "xml") == 0)
+            req.objectMeta = LoadObjectMetaForForm(st->filePath.c_str(), g_settings.maxBytes);
         st->wv->Load(req);
 
         // The browser attaches asynchronously; the window is already valid, so
@@ -329,6 +336,8 @@ static int DoListLoadNext(HWND pluginWin, const wchar_t* fileToLoad, int showFla
         req.dark     = st->dark;
         req.fontSize = g_settings.fontSize;
         req.readOnly = true;
+        if (st->language && strcmp(st->language, "xml") == 0)
+            req.objectMeta = LoadObjectMetaForForm(st->filePath.c_str(), g_settings.maxBytes);
         st->wv->Load(req);
         return LISTPLUGIN_OK;
     }
@@ -373,7 +382,6 @@ void __stdcall ListGetDetectString(char* DetectString, int maxlen)
         }
         pos = sep + 1;
     }
-
     strncpy(DetectString, detect.c_str(), maxlen - 1);
     DetectString[maxlen - 1] = 0;
 }
