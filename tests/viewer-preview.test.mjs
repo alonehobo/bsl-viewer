@@ -65,6 +65,14 @@ function select(id) {
   V.state.previewId = id;
 }
 
+test('form preview toggle uses a window icon instead of the edit-mode eye', () => {
+  const html = fs.readFileSync(path.join(root, 'web', 'viewer.html'), 'utf8');
+  const js = fs.readFileSync(path.join(root, 'web', 'viewer.js'), 'utf8');
+  assert.match(html, /<symbol id="i-window"/);
+  assert.match(html, /id="btn-preview"[^>]*>[\s\S]*?<use href="#i-window">/);
+  assert.match(js, /setIcon\('btn-preview', state\.previewMode \? 'code' : 'window'\)/);
+});
+
 // --- registry shape --------------------------------------------------------
 
 test('every provider names a parser and a viewer module and its chrome', () => {

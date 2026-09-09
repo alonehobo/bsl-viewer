@@ -1375,7 +1375,7 @@ function applyChrome() {
     document.getElementById('btn-format').style.display = (state.isEditing && isBslModule()) ? '' : 'none';
     document.getElementById('btn-comment').style.display = (state.isEditing && isCode) ? '' : 'none';
 
-    setIcon('btn-preview', state.previewMode ? 'code' : 'eye');
+    setIcon('btn-preview', state.previewMode ? 'code' : 'window');
     var canPreview = canPreviewLang();
     document.getElementById('btn-preview').style.display = canPreview ? '' : 'none';
     document.getElementById('btn-minimap').style.display = (isDocPreview() && state.previewMode) ? 'none' : '';
