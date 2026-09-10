@@ -1,8 +1,13 @@
 {
   "name": "tc-bsl-viewer",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "description": "BSLView (Total Commander Lister plugin) and BSLEdit — web/ viewer scripts and their Node test suite. The C++ plugin itself is built by build.bat, not npm.",
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs && npm run test --workspace=1c-form-viewer",
+    "test:viewer": "node --test tests/*.test.mjs",
+    "build:mcp": "npm run build --workspace=1c-form-viewer"
   }
 }

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>1C Form Viewer</title>
+  <link rel="stylesheet" href="viewer.css">
+  <link rel="stylesheet" href="agent-viewer.css">
+</head>
+<body>
+<!-- ICON_SPRITE -->
+<header id="agent-header">
+  <strong id="agent-format">1C Form Viewer</strong>
+  <span id="agent-path">Файл не открыт</span>
+</header>
+<main id="agent-main">
+  <div id="agent-empty">Вызовите MCP-инструмент open_preview.</div>
+  <div id="preview" hidden></div>
+</main>
+<script src="xml-util.js"></script>
+<script src="form-preview.js"></script>
+<script src="template-preview.js"></script>
+<script src="mxl-preview.js"></script>
+<script src="agent-viewer.js"></script>
+</body>
+</html>
+

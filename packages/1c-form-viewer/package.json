@@ -1,0 +1,44 @@
+{
+  "name": "1c-form-viewer",
+  "version": "0.1.0",
+  "description": "Read-only MCP server for visually inspecting 1C managed forms and spreadsheet templates",
+  "type": "module",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "os": [
+    "win32"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "1c-form-viewer": "dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "pretest": "npm run build",
+    "test": "tsx --test tests/*.test.ts",
+    "test:e2e": "tsx --test tests/*.e2e.test.ts",
+    "verify:assets": "node scripts/verify-assets.mjs",
+    "prepack": "npm run clean && npm run build && npm run verify:assets"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "playwright-core": "^1.55.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

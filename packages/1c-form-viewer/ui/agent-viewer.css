@@ -1,0 +1,13 @@
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { display: flex; flex-direction: column; background: #f2f2f2; font-family: Arial, 'Segoe UI', sans-serif; }
+#agent-header { flex: 0 0 auto; display: flex; gap: 12px; align-items: center; min-height: 34px; padding: 0 12px; box-sizing: border-box; background: #fff; border-bottom: 1px solid #d2d2d2; color: #333; font-size: 12px; }
+#agent-format { color: #0067c0; white-space: nowrap; }
+#agent-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#agent-main { flex: 1 1 auto; min-height: 0; position: relative; }
+#agent-empty { padding: 24px; color: #666; }
+#preview { display: block; position: absolute; inset: 0; width: auto; height: auto; min-width: 0; }
+#preview.fp-root, #preview.tp-root { display: flex; height: 100%; }
+.fp-pages-active-panel > .fp-item[data-tag="Pages"] { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.fp-pages-active-panel > .fp-item[data-tag="Pages"] > .fp-control-wrap,
+.fp-pages-active-panel > .fp-item[data-tag="Pages"] > .fp-control-wrap > .fp-group-block,
+.fp-pages-active-panel > .fp-item[data-tag="Pages"] .fp-pages-outer { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
