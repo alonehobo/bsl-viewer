@@ -8,6 +8,7 @@ const core = require('./core/document.cjs');
 const assets = require('./media/assets.json');
 
 const panels = new Map();
+const MCP_PROVIDER_ID = '1cFormViewer.mcp';
 
 function isSupported(uri) {
   return !!uri && core.isSupportedExtension(uri.fsPath);
@@ -193,7 +194,55 @@ async function openPreview(context, inputUri) {
   void sendDocument(panelState);
 }
 
+function mcpServerDefinitions(context) {
+  const configuration = vscode.workspace.getConfiguration('1cFormViewer.mcp');
+  if (!configuration.get('enabled', true)) return [];
+
+  const args = ['--stdio'];
+  if (configuration.get('allowAnyPath', false)) {
+    args.push('--allow-any-path');
+  } else {
+    const workspaceRoots = (vscode.workspace.workspaceFolders || [])
+      .filter((folder) => folder.uri.scheme === 'file')
+      .map((folder) => folder.uri.fsPath);
+    const configuredRoots = configuration.get('additionalRoots', []);
+    const additionalRoots = Array.isArray(configuredRoots)
+      ? configuredRoots.filter((root) => typeof root === 'string' && path.isAbsolute(root))
+      : [];
+    const roots = [...new Set([...workspaceRoots, ...additionalRoots])];
+    if (roots.length === 0) return [];
+    for (const root of roots) args.push('--root', root);
+  }
+
+  const executable = context.asAbsolutePath(path.join('mcp', '1c-form-viewer.exe'));
+  return [new vscode.McpStdioServerDefinition(
+    '1C Form Viewer',
+    executable,
+    args,
+    {},
+    context.extension.packageJSON.version,
+  )];
+}
+
+function registerMcpProvider(context) {
+  const definitionsChanged = new vscode.EventEmitter();
+  const fireDefinitionsChanged = () => definitionsChanged.fire();
+  context.subscriptions.push(
+    definitionsChanged,
+    vscode.workspace.onDidChangeWorkspaceFolders(fireDefinitionsChanged),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('1cFormViewer.mcp')) fireDefinitionsChanged();
+    }),
+    vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER_ID, {
+      onDidChangeMcpServerDefinitions: definitionsChanged.event,
+      provideMcpServerDefinitions: () => mcpServerDefinitions(context),
+      resolveMcpServerDefinition: (server) => server,
+    }),
+  );
+}
+
 function activate(context) {
+  registerMcpProvider(context);
   const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusItem.command = '1cFormViewer.openPreview';
   statusItem.text = '$(preview) 1C Preview';

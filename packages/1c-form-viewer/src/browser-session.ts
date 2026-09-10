@@ -36,8 +36,9 @@ export class BrowserSession {
   private async ensurePage(): Promise<Page> {
     if (this.page && !this.page.isClosed()) return this.page;
     const url = await this.assets.start();
+    let browser: Browser;
     try {
-      this.browser = await chromium.launch({
+      browser = await chromium.launch({
         channel: 'msedge',
         headless: this.options.headless,
       });
@@ -46,16 +47,31 @@ export class BrowserSession {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`Microsoft Edge could not be started. Install Edge or use a Windows host with Edge available. ${detail}`);
     }
-    this.browser.once('disconnected', () => {
-      this.browser = null;
-      this.context = null;
-      this.page = null;
-    });
-    this.context = await this.browser.newContext({ viewport: this.options.viewport });
-    this.page = await this.context.newPage();
-    await this.page.goto(url, { waitUntil: 'load' });
-    await this.page.waitForFunction(() => window.AgentViewer?.ready === true);
-    return this.page;
+    /* Everything past a successful launch has to clean up after itself. Leaving
+     * a launched browser behind on a failed newContext/goto left an orphan Edge
+     * process running and the next call simply launched another one. */
+    try {
+      /* Compare identity before clearing: a late 'disconnected' from a replaced
+       * browser must not wipe the handles of its successor. */
+      browser.once('disconnected', () => {
+        if (this.browser !== browser) return;
+        this.browser = null;
+        this.context = null;
+        this.page = null;
+      });
+      const context = await browser.newContext({ viewport: this.options.viewport });
+      const page = await context.newPage();
+      await page.goto(url, { waitUntil: 'load' });
+      await page.waitForFunction(() => window.AgentViewer?.ready === true);
+      this.browser = browser;
+      this.context = context;
+      this.page = page;
+      return page;
+    } catch (error) {
+      await browser.close().catch(() => undefined);
+      await this.assets.close();
+      throw error;
+    }
   }
 
   private requirePage(): Page {

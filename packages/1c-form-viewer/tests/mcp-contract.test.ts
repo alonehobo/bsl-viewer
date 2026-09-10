@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
-import { createMcpServer } from '../src/mcp-server.js';
+import { createMcpServer, TOOL_NAMES } from '../src/mcp-server.js';
 import type { ViewerController } from '../src/controller.js';
 
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -14,6 +14,12 @@ const state = {
   scrolls: [],
 };
 
+/* Every visual tool now receives the payload and the screenshot of that same
+ * queue turn together, so the fake hands back the pair the server expects. */
+function visual<T>(payload: T) {
+  return { payload, image: png };
+}
+
 class FakeController {
   opened = false;
   requireOpen() {
@@ -21,19 +27,18 @@ class FakeController {
   }
   async open() {
     this.opened = true;
-    return { document: { requestedPath: state.path, resolvedPath: state.path, encoding: 'utf8', size: 10, extension: '.xml' }, state };
+    return visual({ document: { requestedPath: state.path, resolvedPath: state.path, encoding: 'utf8', size: 10, extension: '.xml' }, state });
   }
   async reload() { this.requireOpen(); return this.open(); }
-  async inspect() { this.requireOpen(); return { elements: [{ id: '1' }], state }; }
+  async inspect() { this.requireOpen(); return visual({ elements: [{ id: '1' }], truncated: false, totalElements: 1, state }); }
   async switchTab(_pageId: string, pagesId?: string) {
     this.requireOpen();
     if (!pagesId) throw new Error('page_id is ambiguous; provide pages_id.');
-    return state;
+    return visual(state);
   }
-  async selectElement() { this.requireOpen(); return { found: true, state }; }
-  async scroll() { this.requireOpen(); return { state }; }
-  async capture() { this.requireOpen(); return png; }
-  async screenshot() { this.requireOpen(); return png; }
+  async selectElement() { this.requireOpen(); return visual({ found: true, state }); }
+  async scroll() { this.requireOpen(); return visual({ state }); }
+  async capture() { this.requireOpen(); return visual({ scope: 'viewport', elementId: '', state }); }
   async previewUrl() { this.requireOpen(); return { previewUrl: 'http://127.0.0.1:1234/token/index.html?internal=1', externalEdge: true }; }
   async close() { this.opened = false; return { closed: true as const }; }
 }
@@ -51,10 +56,7 @@ test('advertises all tool schemas and read-only annotations', async (t) => {
   const { client, server } = await connected();
   t.after(async () => { await client.close(); await server.close(); });
   const listed = await client.listTools();
-  assert.deepEqual(listed.tools.map((tool) => tool.name), [
-    'open_preview', 'get_preview_url', 'reload_preview', 'inspect_preview', 'switch_tab',
-    'select_element', 'scroll_preview', 'capture_preview', 'close_preview',
-  ]);
+  assert.deepEqual(listed.tools.map((tool) => tool.name), [...TOOL_NAMES]);
   for (const tool of listed.tools) {
     assert.equal(tool.inputSchema.type, 'object');
     assert.equal(tool.annotations?.readOnlyHint, true);

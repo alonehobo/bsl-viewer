@@ -27,6 +27,14 @@ export class StaticAssetServer {
     const root = await fs.realpath(this.assetsDir);
     this.server = createServer(async (request, response) => {
       try {
+        /* The socket is bound to loopback, but a name that resolves to 127.0.0.1
+         * still reaches it, so a page on an attacker-controlled domain could aim
+         * requests here. The unguessable token already denies it anything useful;
+         * pinning Host closes the door before the token is even consulted. */
+        if (!this.isLoopbackHost(request.headers.host)) {
+          response.writeHead(403).end();
+          return;
+        }
         const requestUrl = new URL(request.url || '/', 'http://127.0.0.1');
         const prefix = `/${this.token}/`;
         if (!requestUrl.pathname.startsWith(prefix)) {
@@ -89,6 +97,14 @@ export class StaticAssetServer {
     if (!address || typeof address === 'string') throw new Error('Failed to bind local preview server');
     this.port = address.port;
     return this.url();
+  }
+
+  private isLoopbackHost(host: string | undefined): boolean {
+    if (!host) return false;
+    const hostname = host.startsWith('[')
+      ? host.slice(0, host.indexOf(']') + 1)
+      : host.split(':')[0];
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
   }
 
   url(): string {

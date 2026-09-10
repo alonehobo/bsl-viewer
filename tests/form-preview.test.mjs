@@ -117,6 +117,22 @@ test('empty autofill-false command bar is skipped', () => {
   assert.equal(T.isEmptyCommandBar({ properties: { Autofill: 'false' }, childItems: [{ tag: 'Button' }] }), false);
 });
 
+test('table hides an empty autofill-false command bar including its additions', () => {
+  const hidden = {
+    properties: {},
+    autoCommandBar: { properties: { Autofill: 'false' }, childItems: [] },
+    searchStringAddition: { tag: 'SearchStringAddition', properties: {} },
+    viewStatusAddition: { tag: 'ViewStatusAddition', properties: {} }
+  };
+  assert.equal(T.tableCommandBarVisible(hidden), false);
+  assert.equal(T.tableCommandBarVisible({ properties: {} }), true);
+  assert.equal(T.tableCommandBarVisible({
+    properties: {},
+    autoCommandBar: { properties: { Autofill: 'false' }, childItems: [{ tag: 'Button' }] }
+  }), true);
+  assert.equal(T.tableCommandBarVisible({ properties: { CommandBarLocation: 'None' } }), false);
+});
+
 test('titleLocation and boolean helpers', () => {
   assert.equal(T.titleLocation({ properties: { TitleLocation: 'None' } }), 'none');
   assert.equal(T.titleLocation({ properties: {} }), 'left');

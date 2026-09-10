@@ -2,7 +2,7 @@
   "name": "1c-form-viewer-vscode",
   "displayName": "1C Form Viewer",
   "description": "Visual preview of 1C managed forms, spreadsheet templates and MXL files in VS Code",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "publisher": "alonehobo",
   "author": {
     "name": "Sergey Martemyanov",
@@ -17,8 +17,11 @@
   "homepage": "https://github.com/alonehobo/bsl-viewer/tree/main/packages/1c-form-viewer-vscode",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.101.0"
   },
+  "os": [
+    "win32"
+  ],
   "categories": [
     "Other"
   ],
@@ -27,6 +30,35 @@
   ],
   "main": "extension.js",
   "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "1cFormViewer.mcp",
+        "label": "1C Form Viewer"
+      }
+    ],
+    "configuration": {
+      "title": "1C Form Viewer",
+      "properties": {
+        "1cFormViewer.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Register the bundled 1C Form Viewer MCP server in VS Code Chat."
+        },
+        "1cFormViewer.mcp.allowAnyPath": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow the MCP server to read supported files outside the current workspace folders."
+        },
+        "1cFormViewer.mcp.additionalRoots": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional absolute directories that the MCP server may read when allowAnyPath is disabled."
+        }
+      }
+    },
     "commands": [
       {
         "command": "1cFormViewer.openPreview",
@@ -66,7 +98,7 @@
   },
   "scripts": {
     "sync": "node ../1c-preview-core/scripts/sync.mjs",
-    "build": "npm run sync && node scripts/copy-assets.mjs",
+    "build": "npm run sync && node scripts/copy-assets.mjs && powershell -NoProfile -ExecutionPolicy Bypass -File ../1c-form-viewer/scripts/build-native.ps1 -Output ./mcp",
     "verify:assets": "node ../1c-preview-core/scripts/verify.mjs",
     "vscode:prepublish": "npm run build",
     "test": "npm run build && node --test tests/*.test.mjs",

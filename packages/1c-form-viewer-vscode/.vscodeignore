@@ -8,3 +8,5 @@
 !media/**
 !core/
 !core/**
+!mcp/
+!mcp/**

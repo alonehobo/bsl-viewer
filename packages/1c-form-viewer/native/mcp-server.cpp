@@ -24,11 +24,13 @@
 #include <string_view>
 #include <thread>
 
-/* This build's identity, in one place. The Node server takes its version from
- * package.json; this one cannot, so keep the two constants below the only
- * copies and bump them together with a release. */
+/* This build's identity. Like the Node server, the version comes from
+ * package.json: build-native.ps1 generates native-version.h from it and
+ * force-includes it, so a release bumps one file. The fallback below only
+ * applies to an ad-hoc compile that skips the script, so it deliberately
+ * reads as unreleased rather than impersonating some real version. */
 #ifndef ONE_C_FORM_VIEWER_VERSION
-#define ONE_C_FORM_VIEWER_VERSION "0.2.0"
+#define ONE_C_FORM_VIEWER_VERSION "0.0.0-dev"
 #endif
 #define ONE_C_FORM_VIEWER_VERSION_W L"" ONE_C_FORM_VIEWER_VERSION
 #define ONE_C_FORM_VIEWER_NAME "1c-form-viewer-native"
@@ -636,7 +638,6 @@ Document loadDocument(const Options& options, const std::string& input) {
     return document;
 }
 
-std::string argsObject(const Json* args) { return args && args->kind == Json::Kind::Object ? args->dump() : "{}"; }
 std::string argString(const Json* args, const std::string& name) { const auto* value = args && args->kind == Json::Kind::Object ? args->get(name) : nullptr; return value ? value->asString() : std::string(); }
 
 std::string toolSchemas() {
@@ -646,7 +647,10 @@ std::string toolSchemas() {
 std::string success(std::string_view id, std::string value, std::string image = {}) {
     std::string output = "{\"jsonrpc\":\"2.0\",\"id\":" + std::string(id) + ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":" + json_string(value) + "}";
     if (!image.empty()) output += ", {\"type\":\"image\",\"data\":" + json_string(image) + ",\"mimeType\":\"image/png\"}";
-    output += "],\"structuredContent\":" + (value.empty() ? "{}" : value) + "}}}";
+    /* Two closing braces: one for "result", one for the envelope. The content
+     * array's own text object is already closed above. A third one used to slip
+     * in here and every successful tools/call reply failed to parse. */
+    output += "],\"structuredContent\":" + (value.empty() ? "{}" : value) + "}}";
     return output;
 }
 
@@ -675,6 +679,7 @@ public:
                 const std::string input = argString(arguments, "path");
                 if (input.empty()) throw std::runtime_error("path is required");
                 Document document = loadDocument(options_, input);
+                lastInput_ = input;
                 preview_.start();
                 preview_.setDocument(document);
                 const std::string url = preview_.url();
@@ -698,14 +703,21 @@ public:
             if (name == "switch_tab") return success(idRaw, preview_.command("switchTab", "{\"pageId\":" + json_string(argString(arguments, "page_id")) + ",\"pagesId\":" + json_string(argString(arguments, "pages_id")) + "}"));
             if (name == "select_element") return success(idRaw, preview_.command("select", "{\"elementId\":" + json_string(argString(arguments, "element_id")) + "}"));
             if (name == "scroll_preview") {
-                std::string args = argsObject(arguments);
-                std::map<std::string, std::string> replacements{{"target", "target"}, {"element_id", "elementId"}, {"delta_x", "deltaX"}, {"delta_y", "deltaY"}};
-                for (const auto& [from, to] : replacements) {
-                    const std::string needle = json_string(from);
-                    std::size_t position = 0;
-                    while ((position = args.find(needle, position)) != std::string::npos) { args.replace(position, needle.size(), json_string(to)); position += to.size() + 2; }
+                /* Rebuild the object to rename the snake_case tool arguments to the
+                 * renderer's camelCase names. This used to be a substring replace over
+                 * the serialised JSON, which also rewrote any *value* that happened to
+                 * spell an argument name, for example element_id "delta_x". */
+                static const std::map<std::string, std::string> renames{
+                    {"element_id", "elementId"}, {"delta_x", "deltaX"}, {"delta_y", "deltaY"},
+                };
+                std::map<std::string, Json> scrollArgs;
+                if (arguments && arguments->kind == Json::Kind::Object) {
+                    for (const auto& [key, value] : arguments->object) {
+                        const auto rename = renames.find(key);
+                        scrollArgs.emplace(rename == renames.end() ? key : rename->second, value);
+                    }
                 }
-                return success(idRaw, preview_.command("scroll", args));
+                return success(idRaw, preview_.command("scroll", Json::objectValue(std::move(scrollArgs)).dump()));
             }
             if (name == "capture_preview") {
                 const std::string scope = argString(arguments, "scope").empty() ? "viewport" : argString(arguments, "scope");
@@ -722,8 +734,6 @@ public:
             return failure(idRaw, error.what());
         }
     }
-
-    void rememberInput(std::string input) { lastInput_ = std::move(input); }
 
 private:
     Options options_;
@@ -746,7 +756,6 @@ fs::path executableDirectory() {
 int wmain(int argc, wchar_t** argv) {
     Options options;
     options.base = executableDirectory();
-    options.roots.push_back(fs::current_path());
     std::string firstInput;
     for (int index = 1; index < argc; ++index) {
         const std::wstring argument = argv[index];
@@ -760,6 +769,10 @@ int wmain(int argc, wchar_t** argv) {
         } else if (argument == L"--version" || argument == L"-v") { std::wcout << ONE_C_FORM_VIEWER_VERSION_W << std::endl; return 0; }
         else if (argument.rfind(L"--", 0) == 0) { std::wcerr << L"Unknown option: " << argument << L"\n"; return 2; }
     }
+    // Match the Node CLI: cwd is only the fallback when the caller supplied
+    // no explicit root. Otherwise an extension-provided allowlist must remain
+    // exact and must not be widened by the process launch directory.
+    if (options.roots.empty()) options.roots.push_back(fs::current_path());
 
     McpApp app(options);
     std::string line;
@@ -767,13 +780,6 @@ int wmain(int argc, wchar_t** argv) {
         if (line.empty()) continue;
         try {
             Json request = JsonParser(line).parse();
-            if (request.get("method") && request.get("method")->asString() == "tools/call") {
-                const auto* params = request.get("params");
-                if (params && params->get("name") && params->get("name")->asString() == "open_preview") {
-                    const auto* args = params->get("arguments");
-                    app.rememberInput(argString(args, "path"));
-                }
-            }
             const std::string response = app.request(request);
             if (!response.empty()) std::cout << response << std::endl;
         } catch (const std::exception& error) {

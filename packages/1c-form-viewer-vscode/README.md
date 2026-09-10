@@ -4,6 +4,21 @@
 `Template.xml` и текстовых MXL рядом с исходным файлом. Используются те же
 renderer-ы, что и в BSLView и `1c-form-viewer`.
 
+Начиная с версии 0.2.0 расширение также содержит MCP-сервер. VS Code
+регистрирует его автоматически как `1C Form Viewer`, поэтому инструменты
+`open_preview`, `inspect_preview`, `select_element`, `switch_tab`,
+`scroll_preview` и `capture_preview` доступны агенту без отдельной установки
+MCP-пакета.
+
+## Установка
+
+В VS Code откройте Extensions (`Ctrl+Shift+X`), найдите `1C Form Viewer` от
+издателя `alonehobo` и нажмите Install. Из командной строки:
+
+```powershell
+code --install-extension alonehobo.1c-form-viewer-vscode
+```
+
 Для открытого `.xml` или `.mxl` файла кнопка `1C Preview` доступна в статус-баре
 справа внизу и, если хватает места, в заголовке редактора. Также остаются
 Command Palette и контекстное меню файла.
@@ -18,6 +33,19 @@ Command Palette и контекстное меню файла.
 
 Preview не изменяет файл. После сохранения или внешнего изменения исходника он
 перечитывается автоматически.
+
+## MCP в VS Code Chat
+
+Встроенный MCP по умолчанию может читать только поддерживаемые файлы из папок
+текущего workspace. Дополнительные каталоги можно перечислить в настройке
+`1cFormViewer.mcp.additionalRoots`. Настройка
+`1cFormViewer.mcp.allowAnyPath` снимает это ограничение и потому по умолчанию
+выключена. Сам сервер можно отключить через `1cFormViewer.mcp.enabled`.
+
+Для проверки регистрации выполните `MCP: List Servers` и выберите
+`1C Form Viewer`. При первом запуске VS Code попросит подтвердить доверие к
+локальному серверу. Нативная сборка входит в VSIX, отдельные Node.js, npm и
+установка пакета `1c-form-viewer` не нужны.
 
 ## Разработка
 
@@ -37,8 +65,8 @@ npm test --workspace=1c-form-viewer-vscode
 $root = "C:\Users\Serge\YandexDisk\Cursor\OtherProjects\tc-bsl-viewer"
 Set-Location "$root\packages\1c-form-viewer-vscode"
 npm run build
-npx --yes @vscode/vsce package --no-dependencies --out "$root\1c-form-viewer-vscode-0.1.6.vsix"
-code --install-extension "$root\1c-form-viewer-vscode-0.1.6.vsix" --force
+npx --yes @vscode/vsce package --no-dependencies --target win32-x64 --out "$root\1c-form-viewer-vscode-0.2.0.vsix"
+code --install-extension "$root\1c-form-viewer-vscode-0.2.0.vsix" --force
 ```
 
 Сборка ассетов выполняется из корневой папки `web/`:

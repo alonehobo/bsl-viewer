@@ -1,6 +1,6 @@
 {
   "name": "1c-form-viewer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read-only MCP server for visually inspecting 1C managed forms and spreadsheet templates",
   "author": {
     "name": "Sergey Martemyanov",
@@ -41,7 +41,7 @@
     "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1",
     "pretest": "npm run build",
     "test": "npm run test:unit && npm run test:e2e",
-    "test:unit": "tsx --test tests/config.test.ts tests/files.test.ts tests/mcp-contract.test.ts tests/static-server.test.ts",
+    "test:unit": "tsx --test tests/config.test.ts tests/files.test.ts tests/mcp-contract.test.ts tests/native-contract.test.ts tests/static-server.test.ts",
     "test:e2e": "tsx --test tests/browser.e2e.test.ts",
     "verify:assets": "node ../1c-preview-core/scripts/verify.mjs && node scripts/verify-assets.mjs",
     "prepack": "npm run clean && npm run build && npm run verify:assets",

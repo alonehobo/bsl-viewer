@@ -7,6 +7,17 @@ export interface PreviewResponse {
   state: BrowserPreviewState;
 }
 
+/* A tool answer and the picture of the page it describes. The screenshot used
+ * to be taken by a second call after the operation had already left the queue,
+ * so another tool could move the page in between and the PNG showed something
+ * the JSON never claimed. Both now happen in one turn of the queue. */
+export interface Visual<T> {
+  payload: T;
+  image: Buffer;
+}
+
+const DEFAULT_INSPECT_LIMIT = 500;
+
 export class ViewerController {
   private activePath = '';
   private queue: Promise<unknown> = Promise.resolve();
@@ -22,13 +33,20 @@ export class ViewerController {
     return next;
   }
 
+  private visual<T>(operation: () => Promise<T>): Promise<Visual<T>> {
+    return this.exclusive(async () => {
+      const payload = await operation();
+      return { payload, image: await this.browser.capture('viewport') };
+    });
+  }
+
   private summary(document: LoadedDocument, state: BrowserPreviewState): PreviewResponse {
     const { content: _content, objectMeta: _objectMeta, ...safeDocument } = document;
     return { document: safeDocument, state };
   }
 
-  open(inputPath: string): Promise<PreviewResponse> {
-    return this.exclusive(async () => {
+  open(inputPath: string): Promise<Visual<PreviewResponse>> {
+    return this.visual(async () => {
       const document = await this.loader.load(inputPath);
       const state = await this.browser.open(document);
       this.activePath = inputPath;
@@ -36,8 +54,8 @@ export class ViewerController {
     });
   }
 
-  reload(): Promise<PreviewResponse> {
-    return this.exclusive(async () => {
+  reload(): Promise<Visual<PreviewResponse>> {
+    return this.visual(async () => {
       if (!this.activePath) throw new Error('No preview is open. Call open_preview first.');
       const previous = await this.browser.state();
       const document = await this.loader.load(this.activePath);
@@ -54,31 +72,39 @@ export class ViewerController {
     });
   }
 
-  inspect(query?: string, visibleOnly = false) {
-    return this.exclusive(async () => ({
-      elements: await this.browser.inspect(query, visibleOnly),
-      state: await this.browser.state(),
-    }));
+  inspect(query?: string, visibleOnly = false, limit = DEFAULT_INSPECT_LIMIT) {
+    return this.visual(async () => {
+      const found = await this.browser.inspect(query, visibleOnly);
+      /* A large form can hold thousands of elements. Returning all of them made
+       * one tool answer bigger than the rest of the conversation, so cut the
+       * list and say so instead of quietly shipping everything. */
+      const elements = found.slice(0, limit);
+      return {
+        elements,
+        truncated: found.length > elements.length,
+        totalElements: found.length,
+        state: await this.browser.state(),
+      };
+    });
   }
 
   switchTab(pageId: string, pagesId?: string) {
-    return this.exclusive(() => this.browser.switchTab(pageId, pagesId));
+    return this.visual(() => this.browser.switchTab(pageId, pagesId));
   }
 
   selectElement(elementId: string) {
-    return this.exclusive(() => this.browser.selectElement(elementId));
+    return this.visual(() => this.browser.selectElement(elementId));
   }
 
   scroll(options: Record<string, unknown>) {
-    return this.exclusive(() => this.browser.scroll(options));
+    return this.visual(() => this.browser.scroll(options));
   }
 
   capture(scope: CaptureScope, elementId?: string) {
-    return this.exclusive(() => this.browser.capture(scope, elementId));
-  }
-
-  screenshot() {
-    return this.exclusive(() => this.browser.capture('viewport'));
+    return this.exclusive(async () => ({
+      payload: { scope, elementId: elementId || '', state: await this.browser.state() },
+      image: await this.browser.capture(scope, elementId),
+    }));
   }
 
   previewUrl() {

@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { BrowserSession } from '../src/browser-session.js';
 import { ViewerController } from '../src/controller.js';
+import { TOOL_NAMES } from '../src/mcp-server.js';
 import { FileLoader } from '../src/files.js';
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,6 +56,39 @@ function nestedForm(): string {
 </Form>`;
 }
 
+function emptyManualTableBarForm(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform">
+  <ChildItems>
+    <Table name="Дерево" id="15">
+      <Representation>Tree</Representation>
+      <AutoCommandBar name="ДеревоКоманднаяПанель" id="17"><Autofill>false</Autofill></AutoCommandBar>
+      <SearchStringAddition name="ДеревоСтрокаПоиска" id="18"/>
+      <ViewStatusAddition name="ДеревоСостояниеПросмотра" id="19"/>
+      <ChildItems><InputField name="Наименование" id="20"/></ChildItems>
+    </Table>
+  </ChildItems>
+</Form>`;
+}
+
+test('an empty autofill-false table command bar has no rendered toolbar row', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), '1c-empty-table-bar-'));
+  const formPath = path.join(root, 'Form.xml');
+  await fs.writeFile(formPath, emptyManualTableBarForm());
+  const loader = await FileLoader.create([root], maxBytes);
+  const browser = new BrowserSession(options(root));
+  t.after(async () => {
+    await browser.close();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  await browser.open(await loader.load(formPath));
+  const page = (browser as unknown as { page: import('playwright-core').Page }).page;
+  assert.equal(await page.locator('[data-id="15"] .fp-table-toolbar').count(), 0);
+  assert.equal(await page.locator('[data-id="15"] .fp-search-item').count(), 0);
+  assert.equal(await page.locator('[data-id="15"] .fp-more-item').count(), 0);
+});
+
 test('one Edge page handles nested tabs, hidden selection, scrolling and reload', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), '1c-form-browser-'));
   const formPath = path.join(root, 'Nested.xml');
@@ -67,7 +101,7 @@ test('one Edge page handles nested tabs, hidden selection, scrolling and reload'
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  const opened = await controller.open(formPath);
+  const { payload: opened } = await controller.open(formPath);
   assert.equal(opened.state.format, 'form');
   assert.equal(opened.state.tabs.find((tab) => tab.pageId === '101')?.active, true);
   const context = (browser as unknown as { context: { newPage: () => Promise<any> } }).context;
@@ -79,31 +113,31 @@ test('one Edge page handles nested tabs, hidden selection, scrolling and reload'
   assert.match(await internalPage.locator('#agent-path').textContent() || '', /Nested\.xml/);
   const originalPage = (browser as unknown as { page: unknown }).page;
 
-  const selected = await controller.selectElement('140') as { found: boolean; state: { tabs: Array<Record<string, unknown>> } };
+  const { payload: selected } = await controller.selectElement('140') as { payload: { found: boolean; state: { tabs: Array<Record<string, unknown>> } } };
   assert.equal(selected.found, true);
   assert.equal(selected.state.tabs.find((tab) => tab.pageId === '102')?.active, true);
   assert.equal(selected.state.tabs.find((tab) => tab.pageId === '115')?.active, true);
 
   await controller.switchTab('111', '110');
-  const switched = await controller.switchTab('112', '110');
+  const { payload: switched } = await controller.switchTab('112', '110');
   assert.equal(switched.tabs.find((tab) => tab.pageId === '112')?.active, true);
 
   const scrollablePage = switched.scrolls.find((row) => row.target === 'active-page' && Number(row.maxY) > 0);
   assert.ok(scrollablePage, `expected a vertically scrollable form page: ${JSON.stringify(switched.scrolls)}`);
-  const active = await controller.scroll({ target: 'active-page', elementId: scrollablePage.elementId, deltaY: 250 });
+  const { payload: active } = await controller.scroll({ target: 'active-page', elementId: scrollablePage.elementId, deltaY: 250 });
   assert.ok(Number((active as { after: { y: number } }).after.y) > 0);
-  const table = await controller.scroll({ target: 'table', elementId: '130', deltaX: 300, deltaY: 80 });
+  const { payload: table } = await controller.scroll({ target: 'table', elementId: '130', deltaX: 300, deltaY: 80 });
   assert.ok((table as { after: { x: number } }).after.x > 0);
   await controller.switchTab('115', '110');
-  const spreadsheet = await controller.scroll({ target: 'spreadsheet', elementId: '140', x: 400, y: 300 });
+  const { payload: spreadsheet } = await controller.scroll({ target: 'spreadsheet', elementId: '140', x: 400, y: 300 });
   assert.ok((spreadsheet as { after: { x: number; y: number } }).after.x > 0);
   assert.ok((spreadsheet as { after: { x: number; y: number } }).after.y > 0, JSON.stringify(spreadsheet));
 
   await fs.appendFile(formPath, '\n<!-- external reload -->\n');
-  const reloaded = await controller.reload();
+  const { payload: reloaded } = await controller.reload();
   assert.equal(reloaded.state.tabs.find((tab) => tab.pageId === '115')?.active, true);
   assert.equal((browser as unknown as { page: unknown }).page, originalPage, 'browser page must be reused');
-  const screenshot = await controller.capture('viewport');
+  const { image: screenshot } = await controller.capture('viewport');
   assert.deepEqual(screenshot.subarray(0, 8), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   assert.ok(screenshot.length > 10_000);
 });
@@ -142,7 +176,7 @@ test('built CLI serves the tools over STDIO and shuts its Edge process down', as
   t.after(() => client.close());
   await client.connect(transport);
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 9);
+  assert.equal(tools.tools.length, TOOL_NAMES.length);
   const opened = await client.callTool({
     name: 'open_preview',
     arguments: { path: path.join(repositoryDir, 'testdata', 'Форма.xml') },

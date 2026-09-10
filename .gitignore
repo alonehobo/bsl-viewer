@@ -56,6 +56,7 @@ testdata/scroll-test/
 artifacts/
 *.vsix
 packages/1c-form-viewer-vscode/media/
+packages/1c-form-viewer-vscode/mcp/
 
 # Generated copies of packages/1c-preview-core. Edit the core, never the copy;
 # `npm run sync --workspace 1c-preview-core` regenerates them all.

@@ -39,7 +39,7 @@ jobs:
       # Both packs run the same prepublish path a release would, so a broken
       # release script fails here rather than on a tag.
       - run: npm pack --workspace=1c-form-viewer
-      - run: npx --yes @vscode/vsce package --no-dependencies
+      - run: npx --yes @vscode/vsce package --no-dependencies --target win32-x64
         working-directory: packages/1c-form-viewer-vscode
       - uses: actions/upload-artifact@v4
         with:

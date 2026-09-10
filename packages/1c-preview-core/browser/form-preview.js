@@ -352,6 +352,11 @@ function isEmptyCommandBar(bar) {
     return isFalse(prop(bar, ['Autofill']));
 }
 
+function tableCommandBarVisible(table) {
+    if (!table || commandBarLocation(table) === 'none') return false;
+    return !table.autoCommandBar || !isEmptyCommandBar(table.autoCommandBar);
+}
+
 function groupHasFields(item) {
     if (!item) return false;
     var tag = item.tag || '';
@@ -2400,7 +2405,7 @@ function createControl(item, tag, ctx) {
          * moves it below the grid. Everything else keeps 1C's default Top. */
         var tblBarLoc = commandBarLocation(item);
         var toolbar = null;
-        if (tblBarLoc !== 'none') {
+        if (tableCommandBarVisible(item)) {
             toolbar = el('div', 'fp-table-toolbar fp-commandbar');
             var barSrc = item.autoCommandBar || { tag: 'AutoCommandBar', childItems: [], properties: {} };
             var barKids = tableBarItems(item, ctx && ctx.model);
@@ -3240,6 +3245,7 @@ root.FormPreview = {
         titleLocation: titleLocation,
         pagesRep: pagesRep,
         isEmptyCommandBar: isEmptyCommandBar,
+        tableCommandBarVisible: tableCommandBarVisible,
         groupHasFields: groupHasFields,
         isFalse: isFalse,
         isTrue: isTrue,
