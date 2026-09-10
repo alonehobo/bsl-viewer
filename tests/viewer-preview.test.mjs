@@ -173,6 +173,27 @@ test('spreadsheet providers are document views, not form views', () => {
   }
 });
 
+test('form and spreadsheet visual previews are never saveable', () => {
+  V.state.isEditing = true;
+  V.state.previewMode = true;
+
+  for (const id of ['form', 'template', 'mxl']) {
+    select(id);
+    assert.equal(V.sourceEditingActive(), false, `${id} preview is read-only`);
+  }
+
+  V.state.previewMode = false;
+  assert.equal(V.sourceEditingActive(), true, 'the XML/source remains editable');
+
+  select('');
+  V.state.previewMode = true;
+  assert.equal(V.sourceEditingActive(), true, 'markdown/html split preview keeps its existing edit behavior');
+
+  V.state.isEditing = false;
+  assert.equal(V.sourceEditingActive(), false, 'ordinary view mode is read-only');
+  V.state.previewMode = false;
+});
+
 /* A form mockup stands in for the real 1C window, so it forces light chrome;
  * a template is an ordinary document and follows the user's theme. */
 test('only the form provider forces light chrome while previewing', () => {

@@ -254,10 +254,16 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
 
 // --- Shared load path ------------------------------------------------------
 
-static HWND DoListLoad(HWND parentWin, const wchar_t* fileToLoad, int showFlags)
+static HWND DoListLoad(HWND parentWin, const wchar_t* fileToLoadIn, int showFlags)
 {
     LoadSettings(false);
-    if (!IsSupported(fileToLoad)) return NULL;
+    if (!IsSupported(fileToLoadIn)) return NULL;
+
+    // Forms/<FormName>.xml is just the form's descriptor; jump straight to
+    // the actual layout at Forms/<FormName>/Ext/Form.xml instead of making
+    // the user dig for it.
+    std::wstring formLayout = FindFormLayoutForMeta(fileToLoadIn);
+    const wchar_t* fileToLoad = formLayout.empty() ? fileToLoadIn : formLayout.c_str();
 
     TextFile file = ReadTextFile(fileToLoad, g_settings.maxBytes);
     if (!file.ok) return NULL;   // unreadable or over the size limit
@@ -307,13 +313,19 @@ static HWND DoListLoad(HWND parentWin, const wchar_t* fileToLoad, int showFlags)
     return NULL;
 }
 
-static int DoListLoadNext(HWND pluginWin, const wchar_t* fileToLoad, int showFlags)
+static int DoListLoadNext(HWND pluginWin, const wchar_t* fileToLoadIn, int showFlags)
 {
     LoadSettings(false);
-    if (!IsSupported(fileToLoad)) return LISTPLUGIN_ERROR;
+    if (!IsSupported(fileToLoadIn)) return LISTPLUGIN_ERROR;
 
     WindowState* st = (WindowState*)GetPropW(pluginWin, PROP_STATE);
     if (!st) return LISTPLUGIN_ERROR;
+
+    // Forms/<FormName>.xml is just the form's descriptor; jump straight to
+    // the actual layout at Forms/<FormName>/Ext/Form.xml instead of making
+    // the user dig for it.
+    std::wstring formLayout = FindFormLayoutForMeta(fileToLoadIn);
+    const wchar_t* fileToLoad = formLayout.empty() ? fileToLoadIn : formLayout.c_str();
 
     TextFile file = ReadTextFile(fileToLoad, g_settings.maxBytes);
     if (!file.ok) return LISTPLUGIN_ERROR;

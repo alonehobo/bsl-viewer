@@ -8,6 +8,7 @@
 
 #include "webview2host.h"
 #include "bslcommon.h"
+#include "resource.h"
 
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
@@ -40,6 +41,19 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             MessageBoxW(hwnd, text, APP_TITLE, MB_OK | MB_ICONERROR);
             DestroyWindow(hwnd);
         }
+        return 0;
+
+    case WM_CLOSE:
+        // Give the page a chance to warn about unsaved edits before the
+        // window actually goes away; it answers asynchronously with
+        // WM_BSLVIEW_CLOSE_ACK. Nothing to ask (page not loaded yet, or
+        // WebView2 failed) falls through to the default close.
+        if (g_webView && g_webView->RequestClose())
+            return 0;
+        break;
+
+    case WM_BSLVIEW_CLOSE_ACK:
+        if (wParam) DestroyWindow(hwnd);
         return 0;
 
     case WM_DESTROY:
@@ -205,6 +219,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
         if (filePath.empty()) return 0;
     }
 
+    // Forms/<FormName>.xml is just the form's descriptor; the actual layout
+    // one would otherwise have to dig for lives at Forms/<FormName>/Ext/Form.xml.
+    std::wstring formLayout = FindFormLayoutForMeta(filePath.c_str());
+    if (!formLayout.empty()) filePath = formLayout;
+
     TextFile file = ReadTextFile(filePath.c_str(), MAX_FILE_BYTES);
     if (!file.ok) {
         MessageBoxW(NULL, L"Не удалось прочитать файл (отсутствует, недоступен или слишком большой).",
@@ -228,7 +247,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     wc.hCursor = LoadCursorW(NULL, MAKEINTRESOURCEW(32512));   // IDC_ARROW
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.lpszClassName = WNDCLASS_NAME;
-    wc.hIcon = LoadIconW(NULL, MAKEINTRESOURCEW(32512));       // IDI_APPLICATION
+    wc.hIcon = LoadIconW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON));
+    wc.hIconSm = (HICON)LoadImageW(hInstance, MAKEINTRESOURCEW(IDI_APP_ICON),
+                                    IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
     RegisterClassExW(&wc);
 
     size_t slash = filePath.find_last_of(L"\\/");

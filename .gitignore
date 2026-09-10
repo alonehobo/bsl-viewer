@@ -14,6 +14,8 @@ bin/
 webview2.nupkg
 webview2sdk/
 build.log
+node_modules/
+*.tgz
 
 # Third-party assets fetched by tools/fetch-monaco.ps1
 web/vs/

@@ -15,8 +15,13 @@ var SKIP_TAGS = {
     ChildItems: 1, Events: 1, Attributes: 1, Commands: 1, Parameters: 1,
     CommandSet: 1, ExtendedTooltip: 1, ContextMenu: 1
 };
-var EXTRA_CHILD_TAGS = ['AutoCommandBar', 'SearchStringAddition', 'ViewStatusAddition', 'SearchControlAddition'];
+var EXTRA_CHILD_TAGS = ['AutoCommandBar', 'SearchStringAddition', 'ViewStatusAddition',
+    'SearchControlAddition', 'ExtendedTooltip'];
+/* Font-like properties carry everything in attributes, so scalarOf() would drop
+ * them; they are parsed separately into `<Tag>Spec` keys that prop() never sees. */
+var FONT_TAGS = { Font: 'FontSpec', TitleFont: 'TitleFontSpec' };
 var CHAR_PX = 8;
+var ROW_PX = 18;
 var RARE_TAGS = {
     TrackBarField: 1, ProgressBarField: 1, TextDocumentField: 1,
     SpreadSheetDocumentField: 1, HTMLDocumentField: 1, ChartField: 1,
@@ -84,6 +89,36 @@ function refOf(el) {
     return '';
 }
 
+/* 1C keeps fonts in attributes: <Font ref="style:..." height="11" bold="true"/>.
+ * `kind` is Absolute / StyleItem / WindowsFont; a StyleItem font may still
+ * override single traits, so absent attributes stay undefined and only the
+ * explicit ones win over whatever the style name suggests. */
+function parseFont(el) {
+    if (!el) return null;
+    function flag(name) {
+        var v = el.getAttribute(name);
+        if (v == null || v === '') return null;
+        return !isFalse(v);
+    }
+    var height = parseFloat(el.getAttribute('height'));
+    var scale = parseFloat(el.getAttribute('scale'));
+    var spec = {
+        kind: el.getAttribute('kind') || '',
+        ref: el.getAttribute('ref') || '',
+        faceName: el.getAttribute('faceName') || '',
+        height: isNaN(height) ? 0 : height,
+        scale: isNaN(scale) ? 0 : scale,
+        bold: flag('bold'),
+        italic: flag('italic'),
+        underline: flag('underline'),
+        strikeout: flag('strikeout')
+    };
+    if (!spec.ref && !spec.faceName && !spec.height && spec.bold == null
+        && spec.italic == null && spec.underline == null && spec.strikeout == null)
+        return null;
+    return spec;
+}
+
 function parseProperties(el) {
     var props = {};
     if (!el) return props;
@@ -92,6 +127,11 @@ function parseProperties(el) {
         var tag = localName(c);
         if (tag === 'CommandSet') {
             props.ExcludedCommands = parseExcludedCommands(c);
+            continue;
+        }
+        if (FONT_TAGS[tag]) {
+            var spec = parseFont(c);
+            if (spec) props[FONT_TAGS[tag]] = spec;
             continue;
         }
         if (!tag || SKIP_TAGS[tag] || tag === 'ChildItems') continue;
@@ -147,6 +187,7 @@ function parseElement(el) {
     if (extras.SearchStringAddition) item.searchStringAddition = extras.SearchStringAddition;
     if (extras.ViewStatusAddition) item.viewStatusAddition = extras.ViewStatusAddition;
     if (extras.SearchControlAddition) item.searchControlAddition = extras.SearchControlAddition;
+    if (extras.ExtendedTooltip) item.extendedTooltip = extras.ExtendedTooltip;
     return item;
 }
 
@@ -262,25 +303,46 @@ function parse(xml, objectMetaXml) {
     var form = findFormRoot(doc);
     if (!form) return { error: 'В файле нет корневого элемента Form' };
     var auto = firstChild(form, 'AutoCommandBar');
-    return {
-        model: {
-            childItemsRoot: parseChildItems(firstChild(form, 'ChildItems')),
-            autoCommandBar: auto ? parseElement(auto) : null,
-            attributes: parseNamedList(firstChild(form, 'Attributes'), 'Attribute'),
-            commands: parseNamedList(firstChild(form, 'Commands'), 'Command'),
-            excludedCommands: parseExcludedCommands(firstChild(form, 'CommandSet')),
-            version: form.getAttribute('version') || '',
-            objectMeta: parseObjectMeta(objectMetaXml)
-        }
+    var model = {
+        /* The Form root is a container element like any group: its own
+         * properties drive the caption, the command bar position, the form
+         * width and the layout of the top-level children. */
+        tag: 'Form',
+        name: form.getAttribute('name') || '',
+        properties: parseProperties(form),
+        childItemsRoot: parseChildItems(firstChild(form, 'ChildItems')),
+        autoCommandBar: auto ? parseElement(auto) : null,
+        attributes: parseNamedList(firstChild(form, 'Attributes'), 'Attribute'),
+        commands: parseNamedList(firstChild(form, 'Commands'), 'Command'),
+        excludedCommands: parseExcludedCommands(firstChild(form, 'CommandSet')),
+        commandInterface: parseCommandInterface(form),
+        version: form.getAttribute('version') || '',
+        objectMeta: parseObjectMeta(objectMetaXml)
     };
+    fillCreateBasedOnMenus(model);
+    return { model: model };
+}
+
+/* Auto / Top / Bottom / None. 1C draws the form command bar at the top unless
+ * the form says otherwise; `None` means there is no bar at all. */
+function commandBarLocation(item) {
+    var v = String(prop(item, ['CommandBarLocation', 'ПоложениеКоманднойПанели']) || '')
+        .toLowerCase().replace(/[\s_-]+/g, '');
+    if (!v) return 'auto';
+    if (v === 'none' || v.indexOf('нет') >= 0) return 'none';
+    if (v === 'bottom' || v.indexOf('низ') >= 0) return 'bottom';
+    if (v === 'top' || v.indexOf('верх') >= 0) return 'top';
+    return 'auto';
 }
 
 function displayItems(model) {
     if (!model) return [];
     var items = model.childItemsRoot || [];
+    var loc = commandBarLocation(model);
+    if (loc === 'none') return items;
     var bar = formCommandBar(model);
     if (bar && !isEmptyCommandBar(bar))
-        return [bar].concat(items);
+        return loc === 'bottom' ? items.concat([bar]) : [bar].concat(items);
     return items;
 }
 
@@ -333,13 +395,18 @@ var STD_COMMANDS = {
     WriteAndClose: 'Записать и закрыть', PostAndClose: 'Провести и закрыть',
     SetDeletionMark: 'Пометить на удаление', Delete: 'Удалить', Reread: 'Перечитать',
     ShowInList: 'Показать в списке', CustomizeForm: 'Изменить форму',
-    Add: 'Добавить', Copy: 'Скопировать', Change: 'Изменить', Find: 'Найти',
-    MoveUp: 'Переместить вверх', MoveDown: 'Переместить вниз', SelectAll: 'Выделить все'
+    Add: 'Добавить', Create: 'Создать', Copy: 'Скопировать', Change: 'Изменить', Find: 'Найти',
+    MoveUp: 'Переместить вверх', MoveDown: 'Переместить вниз', SelectAll: 'Выделить все',
+    SortListAsc: 'Сортировать по возрастанию', SortListDesc: 'Сортировать по убыванию',
+    OutputList: 'Вывести список', ShowMultipleSelection: 'Показать множественный выбор',
+    ListSettings: 'Настройка списка', LoadDynamicListSettings: 'Загрузить настройки списка',
+    SaveDynamicListSettings: 'Сохранить настройки списка',
+    DynamicListStandardSettings: 'Стандартные настройки'
 };
 var PIC_ICON = {
     Write: 'save', WriteAndClose: 'save', Post: 'file-check', PostAndClose: 'file-check',
     Print: 'printer', Help: 'help', Find: 'search', Search: 'search',
-    Create: 'plus', Add: 'plus', CreateListItem: 'plus', Delete: 'x', Copy: 'copy',
+    Create: 'plus', Add: 'plus', CreateListItem: 'plus', Delete: 'x', Copy: 'file-plus',
     Change: 'pencil', Undo: 'arrow-back-up', Redo: 'arrow-forward-up',
     MoveUp: 'arrow-up', MoveDown: 'arrow-down', Calendar: 'calendar',
     Choose: 'dots', DropList: 'chevron-down', Clear: 'x', Picture: 'photo',
@@ -347,8 +414,11 @@ var PIC_ICON = {
     QueryWizard: 'help', Report: 'table', Spreadsheet: 'table', InputField: 'forms',
     Check: 'checkbox', Filter: 'filter', Barcode: 'barcode', Scale: 'scale',
     Calculate: 'calculator', CustomizeForm: 'adjustments', Generate: 'sparkles',
-    Fill: 'sparkles', OutputList: 'layout-list', Sort: 'arrows-sort', EndEdit: 'square',
-    Refresh: 'refresh'
+    Fill: 'sparkles', OutputList: 'printer', Sort: 'arrows-sort', EndEdit: 'square',
+    Refresh: 'refresh', SortListAsc: 'sort-ascending', SortListDesc: 'sort-descending',
+    ShowMultipleSelection: 'checkbox', ListSettings: 'filter',
+    LoadDynamicListSettings: 'folder', SaveDynamicListSettings: 'save',
+    DynamicListStandardSettings: 'arrow-back-up'
 };
 
 function objectMetaCandidates(formPath) {
@@ -442,7 +512,121 @@ function parseObjectMeta(xml) {
         ingestStandardAttributes(firstChild(props, 'StandardAttributes'), '', captions);
     }
     ingestChildObjects(firstChild(obj, 'ChildObjects'), '', captions, stringLen);
-    return { name: name, synonym: synonym, captions: captions, stringLen: stringLen };
+    var kindTag = localName(obj);
+    var kind = '';
+    if (/Catalog/i.test(kindTag)) kind = 'catalog';
+    else if (/Document/i.test(kindTag)) kind = 'document';
+    return { name: name, synonym: synonym, captions: captions, stringLen: stringLen, kind: kind };
+}
+
+function parseCommandInterface(form) {
+    var bar = firstChild(firstChild(form, 'CommandInterface'), 'CommandBar');
+    var out = [];
+    if (!bar) return out;
+    var items = namedChildren(bar, 'Item');
+    for (var i = 0; i < items.length; i++) {
+        var el = items[i];
+        out.push({
+            command: textOf(firstChild(el, 'Command')),
+            group: textOf(firstChild(el, 'CommandGroup')),
+            index: textOf(firstChild(el, 'Index')),
+            defaultVisible: textOf(firstChild(el, 'DefaultVisible')),
+            visible: scalarOf(firstChild(el, 'Visible'))
+        });
+    }
+    return out;
+}
+
+function isCreateBasedOnPopup(item) {
+    if (!item || item.tag !== 'Popup') return false;
+    var name = String(item.name || '');
+    var title = rawTitle(item) || '';
+    return /СоздатьНаОсновании|CreateBasedOn/i.test(name) || /создать на основании/i.test(title);
+}
+
+function isBasedOnCommand(entry) {
+    var cmd = String((entry && entry.command) || '');
+    var group = String((entry && entry.group) || '');
+    if (/FormCommandBarCreateBasedOn/i.test(group)) return true;
+    if (/\.StandardCommand\.CreateBasedOn$/i.test(cmd)) return true;
+    if (/CreateBasedOn|СоздатьНаОсновании|ВводНаОсновании/i.test(cmd)) return true;
+    return false;
+}
+
+function basedOnTitle(cmd) {
+    var parts = String(cmd || '').split('.');
+    if (parts.length >= 4 && /StandardCommand/i.test(parts[2]))
+        return humanizeIdent(parts[1]);
+    if (parts.length >= 4 && /^Command$/i.test(parts[2]))
+        return humanizeIdent(parts[parts.length - 1]);
+    if (parts.length >= 2 && /^CommonCommand$/i.test(parts[0]))
+        return humanizeIdent(parts[1]);
+    return humanizeIdent(lastSeg(cmd));
+}
+
+function createBasedOnButtons(model) {
+    var list = (model && model.commandInterface) || [];
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!isBasedOnCommand(e)) continue;
+        var cmd = e.command;
+        if (!cmd || seen[cmd]) continue;
+        if (/^CommonCommand\./i.test(cmd) && isFalse(e.defaultVisible)) continue;
+        seen[cmd] = true;
+        out.push(syntheticBtn('_basedOn' + i, basedOnTitle(cmd), '', 'Text', {
+            CommandName: cmd
+        }));
+    }
+    return out;
+}
+
+function ensureCreateBasedOnPopup(popup, model) {
+    if (!isCreateBasedOnPopup(popup)) return;
+    if (popupHasCommands(popup)) return;
+    var btns = createBasedOnButtons(model);
+    if (!btns.length) return;
+    popup.childItems = btns;
+    if (!popup.properties) popup.properties = {};
+    popup.properties.Representation = 'Text';
+}
+
+function walkFormItems(item, fn) {
+    if (!item) return;
+    fn(item);
+    if (item.autoCommandBar) walkFormItems(item.autoCommandBar, fn);
+    var kids = item.childItems || [];
+    for (var i = 0; i < kids.length; i++) walkFormItems(kids[i], fn);
+}
+
+function fillCreateBasedOnMenus(model) {
+    if (!model) return;
+    walkFormItems({
+        childItems: model.childItemsRoot,
+        autoCommandBar: model.autoCommandBar
+    }, function (item) {
+        if (item.tag === 'Popup') ensureCreateBasedOnPopup(item, model);
+    });
+}
+
+function tableBarItems(table, model) {
+    var std = tableStdCommands(table, model);
+    var bar = table && table.autoCommandBar;
+    var kids = ((bar && bar.childItems) || []).slice();
+    if (tableIsList(table, model) && !kids.some(isCreateBasedOnPopup)) {
+        var btns = createBasedOnButtons(model);
+        if (btns.length) {
+            kids.unshift({
+                tag: 'Popup',
+                name: '_stdCreateBasedOn',
+                id: '',
+                properties: { Title: 'Создать на основании', Representation: 'Text' },
+                childItems: btns
+            });
+        }
+    }
+    return std.concat(kids);
 }
 
 function buildCaptionIndex(model) {
@@ -590,6 +774,11 @@ function pagesRep(item) {
 function inAdditionalBar(item) {
     var v = String(prop(item, ['LocationInCommandBar', 'ПоложениеВКоманднойПанели']) || '').toLowerCase();
     if (v.indexOf('additional') >= 0 || v.indexOf('дополн') >= 0) return true;
+    /* An explicit InCommandBar pulls a command (OutputList, CustomizeForm, ...)
+     * out of its default overflow slot and onto the bar itself - the form
+     * author's placement wins over the heuristics below. */
+    if (v.indexOf('incommandbar') >= 0 || (v.indexOf('команднойпанели') >= 0 && v.indexOf('дополн') < 0))
+        return false;
     var short = cmdShort(item);
     if (/CustomizeForm|ShowMultipleSelection|OutputList|ListSettings|LoadDynamicListSettings|SaveDynamicListSettings|DynamicListStandardSettings/i.test(short))
         return true;
@@ -659,6 +848,45 @@ function closeAllPopups(root) {
     if (!root) return;
     var open = root.querySelectorAll('.fp-popup-open');
     for (var i = 0; i < open.length; i++) open[i].classList.remove('fp-popup-open');
+    var panels = root._fpPortalPanels || [];
+    for (var p = panels.length - 1; p >= 0; p--) restorePopupPanel(panels[p]);
+    root._fpPortalPanels = [];
+}
+
+function restorePopupPanel(panel) {
+    if (!panel || !panel._fpPopupHome) return;
+    var home = panel._fpPopupHome;
+    panel.style.display = '';
+    panel.style.position = '';
+    panel.style.left = '';
+    panel.style.top = '';
+    panel.style.minWidth = '';
+    if (home.parent) {
+        if (home.next && home.next.parentNode === home.parent)
+            home.parent.insertBefore(panel, home.next);
+        else
+            home.parent.appendChild(panel);
+    }
+    panel._fpPopupHome = null;
+}
+
+function openPopupPanel(root, owner, anchor, panel, minW, outerOwner) {
+    if (!root || !owner || !panel) return;
+    closeAllPopups(root);
+    owner.classList.add('fp-popup-open');
+    if (outerOwner && outerOwner.classList) outerOwner.classList.add('fp-popup-open');
+
+    var doc = root.ownerDocument || document;
+    if (doc && doc.body && panel.parentNode !== doc.body) {
+        panel._fpPopupHome = { parent: panel.parentNode, next: panel.nextSibling };
+        doc.body.appendChild(panel);
+        if (!root._fpPortalPanels) root._fpPortalPanels = [];
+        root._fpPortalPanels.push(panel);
+    }
+    /* Once portalled, the descendant selector that normally reveals the menu
+       no longer applies. Show it before measuring so offsetHeight is real. */
+    panel.style.display = 'block';
+    positionFixedPopup(anchor, panel, minW);
 }
 
 function positionFixedPopup(anchor, panel, minW) {
@@ -695,8 +923,7 @@ function bindPopupToggle(wrap, btn, ctx, item) {
             if (ctx.onSelect) ctx.onSelect(item);
         }
         if (was) return;
-        wrap.classList.add('fp-popup-open');
-        positionFixedPopup(btn, menu, 180);
+        openPopupPanel(ctx && ctx.root, wrap, btn, menu, 180);
     });
 }
 
@@ -714,9 +941,7 @@ function bindGroupPopupToggle(wrap, btn, ctx, item) {
             if (ctx.onSelect) ctx.onSelect(item);
         }
         if (was || !group) return;
-        group.classList.add('fp-popup-open');
-        wrap.classList.add('fp-popup-open');
-        positionFixedPopup(btn, body, 320);
+        openPopupPanel(ctx && ctx.root, group, btn, body, 320, wrap);
     });
 }
 
@@ -845,7 +1070,7 @@ function iconIdFromRef(ref) {
     if (/moveleft|влево|стрелкавлево/i.test(low)) return 'arrow-left';
     if (/moveright|вправо|стрелкавправо/i.test(low)) return 'arrow-right';
     if (/calendar|дата/i.test(low)) return 'calendar';
-    if (/warning|внимание/i.test(low)) return 'alert-triangle';
+    if (/warning|внимание|предупрежд/i.test(low)) return 'alert-triangle';
     if (/info|information/i.test(low)) return 'info-circle';
     if (/report|отчет|spreadsheet|табличн/i.test(low)) return 'table';
     if (/barcode|штрих/i.test(low)) return 'barcode';
@@ -859,9 +1084,15 @@ function iconIdFromRef(ref) {
     if (/раздел/i.test(low)) return 'copy';
     if (/folder|папк/i.test(low)) return 'folder';
     if (/filter|отбор/i.test(low)) return 'filter';
-    if (/scale|вес/i.test(low)) return 'scale';
+    if (/scale|весы|взвеш/i.test(low)) return 'scale';
     if (/nabor|набор|series|серии/i.test(low)) return 'box';
-    return 'box';
+    if (/карт[аоуы]|карточк|card/i.test(low)) return 'credit-card';
+    if (/запрещ|запрет|недоступ|блокир/i.test(low)) return 'ban';
+    if (/превышен|расхожден|ошибк|error/i.test(low)) return 'alert-triangle';
+    /* An unmapped CommonPicture belongs to the configuration, not to the
+     * platform, so nothing can resolve it here. A neutral picture placeholder
+     * is honest about that; a shape like a box would read as a real icon. */
+    return 'photo';
 }
 
 function iconIdFor(item, ctx) {
@@ -881,7 +1112,9 @@ function iconIdFor(item, ctx) {
     if (/набор/i.test(name)) return 'box';
     if (/раздел/i.test(name) || /раздел/i.test(short)) return 'copy';
     if (/обнов/i.test(name) || short === 'Refresh') return 'refresh';
-    return 'box';
+    if (/запрещ|запрет/i.test(name) || /запрещ|запрет/i.test(title)) return 'ban';
+    if (/карт[аоуы]|карточк/i.test(name) || /карт[аоуы]|карточк/i.test(title)) return 'credit-card';
+    return 'photo';
 }
 
 function svgIcon(name, cls) {
@@ -911,6 +1144,13 @@ function charSize(raw) {
     var n = parseInt(raw, 10);
     if (!n || n < 0) return 0;
     return n * CHAR_PX;
+}
+
+/* Heights in 1C are counted in text lines, not characters. */
+function charHeight(raw) {
+    var n = parseInt(raw, 10);
+    if (!n || n < 0) return 0;
+    return n * ROW_PX;
 }
 
 function fieldKind(item) {
@@ -994,6 +1234,145 @@ function wantsVStretch(item, tag, ctx) {
     return false;
 }
 
+/* 1C font heights are points over a 9pt base, and the mockup's base is 12px. */
+var FONT_BASE_PT = 9;
+var FONT_BASE_PX = 12;
+
+/* A StyleItem font is a name, not a value: the style table is not in Form.xml,
+ * so only the traits the name states outright are honoured - the same way
+ * BackColor/TextColor style names are matched. Explicit attributes always win. */
+function fontCss(spec) {
+    if (!spec) return null;
+    var css = {};
+    var ref = String(spec.ref || '');
+    var bold = spec.bold;
+    if (bold == null && /bold|важн|жирн/i.test(ref)) bold = true;
+    if (bold != null) css.fontWeight = bold ? '700' : '400';
+    var italic = spec.italic;
+    if (italic == null && /italic|курсив/i.test(ref)) italic = true;
+    if (italic != null) css.fontStyle = italic ? 'italic' : 'normal';
+    var deco = [];
+    if (spec.underline || (spec.underline == null && /underline|подчерк/i.test(ref))) deco.push('underline');
+    if (spec.strikeout) deco.push('line-through');
+    if (deco.length) css.textDecoration = deco.join(' ');
+    var px = 0;
+    if (spec.height > 0) px = spec.height * (FONT_BASE_PX / FONT_BASE_PT);
+    else if (/large|крупн/i.test(ref)) px = FONT_BASE_PX * 1.25;
+    else if (/small|мелк/i.test(ref)) px = FONT_BASE_PX * 0.85;
+    if (spec.scale > 0 && spec.scale !== 100) px = (px || FONT_BASE_PX) * (spec.scale / 100);
+    if (px > 0) css.fontSize = Math.max(7, Math.min(48, Math.round(px * 10) / 10)) + 'px';
+    if (spec.faceName) css.fontFamily = spec.faceName + ', Arial, sans-serif';
+    for (var k in css) { if (Object.prototype.hasOwnProperty.call(css, k)) return css; }
+    return null;
+}
+
+function setFontCss(node, css) {
+    if (!node || !css) return;
+    for (var k in css) {
+        if (Object.prototype.hasOwnProperty.call(css, k)) node.style[k] = css[k];
+    }
+}
+
+/* Font styles the element's own text, TitleFont its caption. A LabelField
+ * shows no value in the preview, so its Font lands on the caption we do draw -
+ * otherwise the bold "итого"-style labels of real forms would go flat. */
+function applyFonts(div, item, tag) {
+    var props = item && item.properties;
+    if (!props) return;
+    var body = fontCss(props.FontSpec);
+    var title = fontCss(props.TitleFontSpec);
+    if (body) {
+        var targets = div.querySelectorAll('.fp-label-decoration, .fp-input, .fp-btn-text, .fp-fallback-label');
+        if (targets.length) {
+            for (var i = 0; i < targets.length; i++) setFontCss(targets[i], body);
+        } else {
+            var one = div.querySelector('.fp-button, .fp-link, .fp-group-title, .fp-collapse-text')
+                || (tag === 'LabelField' ? div.querySelector('.fp-field-label') : null);
+            setFontCss(one || div, body);
+        }
+    }
+    if (title) {
+        var labels = div.querySelectorAll('.fp-field-label, .fp-group-title, .fp-collapse-text, .fp-popup-group-title');
+        for (var j = 0; j < labels.length; j++) setFontCss(labels[j], title);
+    }
+}
+
+function isTumbler(raw) {
+    var v = String(raw || '').toLowerCase().replace(/[\s_-]+/g, '');
+    return v.indexOf('tumbler') >= 0 || v.indexOf('switcher') >= 0 || v.indexOf('тумблер') >= 0;
+}
+
+function normPictureSize(raw) {
+    var v = String(raw || '').toLowerCase().replace(/[\s_-]+/g, '');
+    if (!v) return '';
+    if (v.indexOf('stretch') >= 0 || v.indexOf('растяг') >= 0) return 'stretch';
+    if (v.indexOf('proportion') >= 0 || v.indexOf('пропорц') >= 0) return 'proportionally';
+    if (v.indexOf('byfontsize') >= 0 || v.indexOf('поразмеру') >= 0) return 'byfontsize';
+    if (v.indexOf('autosize') >= 0 || v.indexOf('авто') >= 0) return 'autosize';
+    if (v.indexOf('real') >= 0 || v.indexOf('реальн') >= 0) return 'realsize';
+    return '';
+}
+
+/* Only absolute colours can be drawn as-is; style names keep going through the
+ * existing keyword matching, which is all Form.xml gives us. */
+function absoluteColor(raw) {
+    var v = String(raw || '').trim();
+    if (/^#[0-9a-f]{3}$/i.test(v) || /^#[0-9a-f]{6}$/i.test(v)) return v;
+    var rgb = v.match(/^(\d{1,3})\s*[,;]\s*(\d{1,3})\s*[,;]\s*(\d{1,3})$/);
+    if (rgb) return 'rgb(' + rgb[1] + ',' + rgb[2] + ',' + rgb[3] + ')';
+    return '';
+}
+
+function tooltipRepresentation(item) {
+    var v = String(prop(item, ['ToolTipRepresentation', 'ОтображениеПодсказки']) || '')
+        .toLowerCase().replace(/[\s_-]+/g, '');
+    if (!v || v === 'auto' || v.indexOf('авто') >= 0) return 'auto';
+    if (v === 'none' || v.indexOf('нет') >= 0) return 'none';
+    if (v.indexOf('button') >= 0 || v.indexOf('кнопк') >= 0) return 'button';
+    if (v.indexOf('bottom') >= 0 || v.indexOf('снизу') >= 0) return 'bottom';
+    if (v.indexOf('top') >= 0 || v.indexOf('сверху') >= 0) return 'top';
+    if (v.indexOf('right') >= 0 || v.indexOf('справа') >= 0) return 'right';
+    if (v.indexOf('left') >= 0 || v.indexOf('слева') >= 0) return 'left';
+    if (v.indexOf('balloon') >= 0 || v.indexOf('облак') >= 0) return 'balloon';
+    return 'auto';
+}
+
+function tooltipText(item) {
+    if (!item) return '';
+    var tip = item.extendedTooltip ? rawTitle(item.extendedTooltip) : '';
+    if (tip) return plainFormattedText(tip);
+    return plainFormattedText(prop(item, ['ToolTip', 'Подсказка']));
+}
+
+/* ShowBottom / ShowTop / ShowLeft / ShowRight put the extended tooltip on the
+ * form as grey text; Button puts a "?" next to the control. Anything else stays
+ * a hover title, which is what 1C does too. */
+function applyTooltip(div, item, inBar) {
+    var text = tooltipText(item);
+    if (!text) return;
+    var rep = tooltipRepresentation(item);
+    if (rep === 'none') return;
+    /* Inside a command bar 1C only ever shows the tooltip on hover, whatever
+     * the representation says - a text line there would break the bar. */
+    if (inBar || rep === 'auto' || rep === 'balloon') {
+        if (!div.title) div.title = text;
+        return;
+    }
+    if (rep === 'button') {
+        var btn = el('button', 'fp-tooltip-btn', '?');
+        btn.type = 'button';
+        btn.disabled = true;
+        btn.title = text;
+        div.appendChild(btn);
+        div.classList.add('fp-has-tooltip-btn');
+        return;
+    }
+    var note = el('span', 'fp-tooltip-text fp-tooltip-' + rep, text);
+    if (rep === 'top' || rep === 'left') div.insertBefore(note, div.firstChild);
+    else div.appendChild(note);
+    div.classList.add('fp-tooltip-side-' + (rep === 'left' || rep === 'right' ? 'h' : 'v'));
+}
+
 function applyItemMetrics(div, item, tag, parentMeta, ctx) {
     if (!div || !item) return;
     var hs = prop(item, ['HorizontalStretch', 'ГоризонтальноеРастягивание']);
@@ -1025,7 +1404,7 @@ function applyItemMetrics(div, item, tag, parentMeta, ctx) {
         div.style.alignSelf = 'stretch';
         if (tag === 'Pages') div.classList.add('fp-pages-tabs');
     }
-    var inputWrap = div.querySelector('.fp-input-wrap');
+    var inputWrap = div.querySelector('.fp-input-wrap, .fp-labelfield-value');
     if (inputWrap) {
         if (w) {
             inputWrap.style.width = w + 'px';
@@ -1064,12 +1443,54 @@ function applyItemMetrics(div, item, tag, parentMeta, ctx) {
     }
     var tc = prop(item, ['TextColor']);
     if (tc) {
+        var tcAbs = absoluteColor(tc);
         var tcl = tc.toLowerCase();
-        if (/firebrick|красный|red|проблема/i.test(tcl)) div.classList.add('fp-text-danger');
+        if (tcAbs) div.style.color = tcAbs;
+        else if (/firebrick|красный|red|проблема/i.test(tcl)) div.classList.add('fp-text-danger');
         else if (/заголовокотчета|группавариантов|specialtext/i.test(tcl)) div.classList.add('fp-text-accent');
         else if (/гиперссылка/i.test(tcl)) div.classList.add('fp-text-link');
         else if (/серый|gray|grey/i.test(tcl)) div.classList.add('fp-text-muted');
     }
+    if (bc) {
+        var bcAbs = absoluteColor(bc);
+        if (bcAbs) {
+            var bcTarget = div.querySelector('.fp-input-wrap') || div;
+            bcTarget.style.backgroundColor = bcAbs;
+        }
+    }
+    var borderAbs = absoluteColor(prop(item, ['BorderColor', 'ЦветРамки']));
+    if (borderAbs) {
+        var bTarget = div.querySelector('.fp-input-wrap') || div;
+        bTarget.style.borderColor = borderAbs;
+    }
+    /* Enabled=false is 1C's "недоступен": the control still occupies its place
+     * but its text goes grey. ReadOnly already has its own washed-out field. */
+    if (isFalse(prop(item, ['Enabled', 'Доступность', 'Доступен'])))
+        div.classList.add('fp-disabled');
+    /* MaxHeight caps the element; AutoMaxHeight=false only turns off the
+     * automatic cap, so it must not be read as a height of its own. */
+    var mh = charHeight(prop(item, ['MaxHeight', 'МаксимальнаяВысота']));
+    if (mh) div.style.maxHeight = mh + 'px';
+    var th = parseInt(prop(item, ['TitleHeight', 'ВысотаЗаголовка']), 10);
+    if (th > 1) {
+        var thLabel = div.querySelector('.fp-field-label');
+        if (thLabel) {
+            thLabel.style.whiteSpace = 'normal';
+            thLabel.style.maxHeight = (th * 16) + 'px';
+            div.classList.add('fp-title-multiline');
+        }
+    }
+    var psize = normPictureSize(prop(item, ['PictureSize', 'РазмерКартинки']));
+    if (psize && (tag === 'PictureDecoration' || tag === 'PictureField')) {
+        var picBox = div.querySelector('.fp-picture-icon');
+        if (picBox) {
+            picBox.classList.add('fp-picture-' + psize);
+            if (w) picBox.style.width = w + 'px';
+            var picH = charHeight(prop(item, ['Height', 'Высота']));
+            if (picH) picBox.style.height = picH + 'px';
+        }
+    }
+    applyFonts(div, item, tag);
 }
 
 function syntheticBtn(name, title, picture, rep, extra) {
@@ -1225,20 +1646,60 @@ function tableExcludes(table, names) {
     return false;
 }
 
-function tableStdCommands(table) {
+function tableDataAttr(table, model) {
+    var path = lastSeg(prop(table, ['DataPath']));
+    if (!path || !model || !model.attributes) return null;
+    var attrs = model.attributes;
+    for (var i = 0; i < attrs.length; i++) {
+        if (attrs[i] && attrs[i].name === path) return attrs[i];
+    }
+    return null;
+}
+
+function tableIsList(table, model) {
+    var trep = String(prop(table, ['Representation']) || '').toLowerCase().replace(/[\s_-]+/g, '');
+    if (trep === 'list' || trep === 'tree' || trep === 'hierarchicallist') return true;
+    var attr = tableDataAttr(table, model);
+    return !!(attr && /DynamicList|ДинамическийСписок/i.test(String(prop(attr, ['Type']) || '')));
+}
+
+function tableIsTree(table) {
+    var trep = String(prop(table, ['Representation']) || '').toLowerCase().replace(/[\s_-]+/g, '');
+    return trep === 'tree' || trep === 'hierarchicallist';
+}
+
+/* InitialTreeView says whether 1C opens the tree already unfolded. */
+function treeExpanded(table) {
+    var v = String(prop(table, ['InitialTreeView', 'НачальноеОтображениеДерева']) || '')
+        .toLowerCase().replace(/[\s_-]+/g, '');
+    if (!v) return false;
+    /* NoExpand also contains "expand", so the negatives are checked first. */
+    if (v.indexOf('no') === 0 || v.indexOf('dont') === 0 || v.indexOf('не') === 0) return false;
+    return v.indexOf('expand') >= 0 || v.indexOf('разверн') >= 0;
+}
+
+function tableStdCommands(table, model) {
     var bar = table && table.autoCommandBar;
     if (bar && isFalse(prop(bar, ['Autofill']))) return [];
     var out = [];
+    var isList = tableIsList(table, model);
     if (!table || !isFalse(prop(table, ['ChangeRowSet']))) {
-        if (!tableExcludes(table, ['Create', 'Add']))
+        if (isList) {
+            if (!tableExcludes(table, ['Create', 'Add']))
+                out.push(syntheticBtn('_stdCreate', 'Создать', '', 'Text', {
+                    CommandName: 'Form.StandardCommand.Create'
+                }));
+            if (!tableExcludes(table, ['Copy']))
+                out.push(syntheticBtn('_stdCopy', 'Скопировать', 'StdPicture.Copy', 'Picture', {
+                    CommandName: 'Form.StandardCommand.Copy'
+                }));
+        } else if (!tableExcludes(table, ['Create', 'Add'])) {
             out.push(syntheticBtn('_stdAdd', 'Добавить', '', 'Text'));
-    }
-    if (!table || !isFalse(prop(table, ['ChangeRowOrder']))) {
-        var trep = String(prop(table, ['Representation']) || '').toLowerCase().replace(/[\s_-]+/g, '');
-        if (trep !== 'list') {
-            out.push(syntheticBtn('_stdUp', 'Переместить вверх', 'StdPicture.MoveUp', 'Picture'));
-            out.push(syntheticBtn('_stdDown', 'Переместить вниз', 'StdPicture.MoveDown', 'Picture'));
         }
+    }
+    if (!isList && (!table || !isFalse(prop(table, ['ChangeRowOrder'])))) {
+        out.push(syntheticBtn('_stdUp', 'Переместить вверх', 'StdPicture.MoveUp', 'Picture'));
+        out.push(syntheticBtn('_stdDown', 'Переместить вниз', 'StdPicture.MoveDown', 'Picture'));
     }
     return out;
 }
@@ -1377,8 +1838,6 @@ function titleOf(item, ctx) {
 
 function displayLabel(item, ctx, tag) {
     if (titleLocation(item) === 'none') return '';
-    if (tag === 'LabelField' && !rawTitle(item) && item.events && item.events.indexOf('URLProcessing') >= 0)
-        return '';
     var t = titleOf(item, ctx);
     if (t) return t;
     var rep = representationOf(item);
@@ -1533,6 +1992,14 @@ function layoutMeta(item) {
         var v = alignFlex(gv, 'v');
         if (orientation === 'horizontal') { jc = h; ai = v; } else { jc = v; ai = h; }
         if (th === 'use') ai = 'stretch';
+        /* A command bar carries its own HorizontalLocation and can sit right or
+         * centred inside its container. It has to land in the layout meta:
+         * applyLayout() writes justifyContent last and would erase anything set
+         * on the bar element directly. */
+        if (isBar) {
+            var bloc = alignFlex(prop(item, ['HorizontalLocation', 'ГоризонтальноеПоложение']), 'h');
+            if (bloc) jc = bloc;
+        }
     }
     return {
         tag: tag, orientation: orientation, shouldIndentChildren: !!indent,
@@ -1639,12 +2106,22 @@ function appendInputButtons(field, item) {
     var openRaw = prop(item, ['OpenButton']);
     var openBtn = openRaw ? isTrue(openRaw) : (kind === 'ref' && !isFalse(openRaw));
     if (kind === 'date') field.appendChild(iconBtn('calendar'));
-    if (drop) field.appendChild(iconBtn('chevron-down'));
+    /* ChoiceListButton is the separate "выбор из списка" arrow: it appears even
+     * when DropListButton is off, and the two are never merged into one glyph. */
+    if (drop || isTrue(prop(item, ['ChoiceListButton']))) field.appendChild(iconBtn('caret-down'));
     if (choice && kind !== 'number' && kind !== 'date') field.appendChild(iconBtn('dots'));
-    if (openBtn && kind === 'ref') field.appendChild(iconBtn('box'));
+    if (isTrue(prop(item, ['CreateButton']))) field.appendChild(iconBtn('plus'));
+    if (openBtn && kind === 'ref') field.appendChild(iconBtn('open-1c'));
     var hasClear = isTrue(prop(item, ['ClearButton']));
     if (!hasClear && item.events && item.events.indexOf('Clearing') >= 0) hasClear = true;
     if (hasClear) field.appendChild(iconBtn('x'));
+    /* SpinButton stacks the up/down pair at the right edge of the field. */
+    if (isTrue(prop(item, ['SpinButton', 'КнопкаРегулирования']))) {
+        var spin = el('span', 'fp-spin');
+        spin.appendChild(el('span', 'fp-spin-up', '▴'));
+        spin.appendChild(el('span', 'fp-spin-down', '▾'));
+        field.appendChild(spin);
+    }
 }
 
 function withColon(label, loc) {
@@ -1669,11 +2146,22 @@ function makeFieldInput(item, loc, label, ctx) {
     inp.readOnly = true;
     inp.tabIndex = -1;
     var ph = formatPlaceholder(item);
+    /* PasswordMode replaces every character with a dot; there is no value in the
+     * preview, so a fixed run of dots is what the field looks like when filled. */
+    if (isTrue(prop(item, ['PasswordMode', 'РежимПароля']))) {
+        inp.classList.add('fp-input-password');
+        ph = '••••••••';
+    }
     if (ph) inp.value = ph;
     if (isTrue(prop(item, ['ReadOnly']))) {
         inp.classList.add('fp-input-readonly');
         field.classList.add('fp-input-readonly-wrap');
     }
+    /* AutoMarkIncomplete draws 1C's red dotted underline inside an empty field.
+     * Only the explicit flag is honoured: the platform also turns the mark on
+     * for attributes the metadata marks as mandatory, and that metadata is not
+     * in Form.xml. */
+    if (marksIncomplete(item) && !ph) inp.classList.add('fp-input-incomplete');
     var ha = String(prop(item, ['HorizontalAlign']) || '').toLowerCase();
     if (ha.indexOf('right') >= 0 || ha.indexOf('прав') >= 0) inp.style.textAlign = 'right';
     field.appendChild(inp);
@@ -1682,12 +2170,34 @@ function makeFieldInput(item, loc, label, ctx) {
     return wrap;
 }
 
+/* AutoMarkIncomplete draws 1C's red dotted underline inside an unfilled field.
+ * Only the explicit flag is honoured: the platform also raises the mark for
+ * attributes the metadata marks as mandatory, and that metadata is not in
+ * Form.xml, so anything else would be a guess. */
+function marksIncomplete(item) {
+    return isTrue(prop(item, ['AutoMarkIncomplete', 'АвтоОтметкаНезаполненного']));
+}
+
+/* Whether anything can put a glyph on this button: its own picture, its
+ * command's picture, or a standard command the icon table covers. */
+function hasButtonIcon(item, ctx) {
+    if (isHelpItem(item)) return true;
+    if (pictureRef(item) || commandMeta(item, ctx, 'picture')) return true;
+    var short = cmdShort(item);
+    return !!(short && PIC_ICON[short]);
+}
+
 function resolveButtonRep(item, ctx) {
     var rep = representationOf(item);
     if (rep === 'auto') {
         var crep = commandMeta(item, ctx, 'rep');
         if (crep && crep !== 'auto') rep = crep;
     }
+    /* Representation=Picture/PictureAndText on a command that carries no
+     * picture is drawn as plain text by 1C, not as a placeholder glyph. */
+    if ((rep === 'picture' || rep === 'pictureandtext') && !hasButtonIcon(item, ctx)
+        && (rawTitle(item) || commandMeta(item, ctx, 'title') || titleOf(item, ctx)))
+        return 'text';
     if (rep !== 'auto') return rep;
     if (item && item.tag === 'Popup') {
         var pPic = pictureRef(item) || commandMeta(item, ctx, 'picture');
@@ -1698,7 +2208,15 @@ function resolveButtonRep(item, ctx) {
     var shortCmd = cmdShort(item);
     var isDefault = isTrue(prop(item, ['DefaultButton']));
     var pic = pictureRef(item) || commandMeta(item, ctx, 'picture');
-    var iconStd = { MoveUp: 1, MoveDown: 1, Delete: 1, Copy: 1, Change: 1, Find: 1, Refresh: 1 };
+    /* These are the same standard commands inAdditionalBar() defaults into the
+     * "Еще" overflow; an explicit LocationInCommandBar there pulls one onto the
+     * bar itself, and 1C always draws it as a bare icon, never as raw text. */
+    var iconStd = {
+        MoveUp: 1, MoveDown: 1, Delete: 1, Copy: 1, Change: 1, Find: 1, Refresh: 1,
+        SortListAsc: 1, SortListDesc: 1, OutputList: 1, CustomizeForm: 1,
+        ShowMultipleSelection: 1, ListSettings: 1, LoadDynamicListSettings: 1,
+        SaveDynamicListSettings: 1, DynamicListStandardSettings: 1
+    };
     if (isDefault) return pic ? 'pictureandtext' : 'text';
     if (iconStd[shortCmd] && !rawTitle(item)) return 'picture';
     if (rawTitle(item)) return 'text';
@@ -1742,6 +2260,16 @@ function makeBarButton(item, tag, ctx) {
     return btn;
 }
 
+/* A column is as wide as its own Width, else as wide as its caption. The value
+ * is needed twice: on the header cell, and on the body cells of a table whose
+ * Header=false leaves nothing else to hold the columns apart. */
+function columnWidthPx(col, ctx) {
+    var cw = charSize(prop(col, ['Width', 'Ширина']));
+    if (cw) return cw;
+    var cap = columnCaption(col, ctx) || (col && col.name) || '';
+    return Math.max(48, String(cap).length * CHAR_PX);
+}
+
 function makeColumnTh(col, ctx) {
     var cap = columnCaption(col, ctx);
     var pic = pictureRef(col) || prop(col, ['HeaderPicture']);
@@ -1753,9 +2281,7 @@ function makeColumnTh(col, ctx) {
         th.textContent = cap || col.name || '—';
     }
     th.setAttribute('data-id', itemKey(col));
-    var cw = charSize(prop(col, ['Width']));
-    var capW = Math.max(48, String(cap || col.name || '').length * CHAR_PX);
-    th.style.minWidth = (cw || capW) + 'px';
+    th.style.minWidth = columnWidthPx(col, ctx) + 'px';
     return th;
 }
 
@@ -1784,9 +2310,17 @@ function createControl(item, tag, ctx) {
         });
     } else if (tag === 'CheckBoxField') {
         wrap.className = 'fp-control-wrap fp-field-row fp-check-row';
-        var cb = el('input', 'fp-check');
-        cb.type = 'checkbox';
-        cb.disabled = true;
+        /* CheckBoxType=Tumbler/Switcher is 1C's sliding switch, not a box. */
+        var cb;
+        if (isTumbler(prop(item, ['CheckBoxType', 'ВидФлажка']))) {
+            cb = el('span', 'fp-switch');
+            cb.appendChild(el('span', 'fp-switch-knob'));
+            wrap.classList.add('fp-check-switch');
+        } else {
+            cb = el('input', 'fp-check');
+            cb.type = 'checkbox';
+            cb.disabled = true;
+        }
         var lblCb = el('span', 'fp-field-label', label || '—');
         if (loc === 'right' || loc === 'none') { wrap.appendChild(cb); if (loc !== 'none') wrap.appendChild(lblCb); }
         else { wrap.appendChild(lblCb); wrap.appendChild(cb); }
@@ -1795,6 +2329,18 @@ function createControl(item, tag, ctx) {
         if (label && loc !== 'none') wrap.appendChild(el('span', 'fp-field-label', withColon(label, loc)));
         var opts = radioOptions(item);
         var colCount = parseInt(prop(item, ['ColumnsCount']), 10) || 0;
+        /* RadioButtonType=Tumbler draws the choices as one segmented button. */
+        if (isTumbler(prop(item, ['RadioButtonType', 'ВидПереключателя']))) {
+            var seg = el('div', 'fp-segmented');
+            opts.forEach(function (opt, idx) {
+                var sb = el('button', 'fp-segmented-item' + (idx === 0 ? ' active' : ''), opt);
+                sb.type = 'button';
+                sb.disabled = true;
+                seg.appendChild(sb);
+            });
+            wrap.appendChild(seg);
+            return wrap;
+        }
         var row = colCount !== 1 && opts.length <= 4;
         var stack = el('div', 'fp-radio-stack' + (row ? ' fp-radio-row' : ''));
         opts.forEach(function (opt, idx) {
@@ -1826,17 +2372,21 @@ function createControl(item, tag, ctx) {
         wrap.appendChild(makePopupMenu(item, ctx));
         wrap._popupBtn = pbtn;
     } else if (tag === 'LabelField') {
-        var asLink = isHyperlinkItem(item) || (item.events && item.events.indexOf('URLProcessing') >= 0);
-        var lfCls = 'fp-label' + (asLink ? ' fp-link' : '');
-        var lfText = label;
-        if (!lfText && (loc === 'none' || asLink)) lfText = '';
-        else if (!lfText) lfText = '—';
-        if (lfText) {
-            var lf = el('span', lfCls);
-            setFormattedText(lf, lfText, asLink);
-            wrap.appendChild(lf);
+        /* A LabelField is a data field, not a caption: 1C draws its title at
+         * TitleLocation and the bound value next to it. The preview has no
+         * runtime values to draw, but the configurator still reserves the
+         * value's layout space next to the title - so an empty slot is drawn
+         * at the field's default width (applyItemMetrics sizes it exactly
+         * like an InputField's box), styled as a link when Hiperlink=true.
+         * A LabelField with no DataPath is a static caption with nothing to
+         * reserve space for. `TitleLocation=None` hides both. */
+        wrap.className = 'fp-control-wrap fp-field-row fp-title-' + loc;
+        var lfTitle = withColon(label, loc);
+        if (loc !== 'none') {
+            if (lfTitle) wrap.appendChild(el('span', 'fp-field-label', lfTitle));
+            if (prop(item, ['DataPath']))
+                wrap.appendChild(el('span', 'fp-labelfield-value' + (isHyperlinkItem(item) ? ' fp-link' : '')));
         }
-        else if (asLink) wrap.appendChild(el('span', lfCls, '\u00a0'));
     } else if (tag === 'SpreadSheetDocumentField') {
         wrap.className = 'fp-control-wrap fp-spreadsheet-field';
         var viewport = el('div', 'fp-spreadsheet-viewport');
@@ -1846,30 +2396,36 @@ function createControl(item, tag, ctx) {
         wrap.appendChild(viewport);
     } else if (tag === 'Table') {
         wrap.className = 'fp-control-wrap fp-table-widget';
-        var toolbar = el('div', 'fp-table-toolbar fp-commandbar');
-        var barSrc = item.autoCommandBar || { tag: 'AutoCommandBar', childItems: [], properties: {} };
-        var barKids = tableStdCommands(item).concat(barSrc.childItems || []);
-        renderPreview(barKids, toolbar, ctx, barSrc);
-        if (item.searchStringAddition && !additionHidden(item, 'SearchStringLocation')) {
-            var sItem = item.searchStringAddition;
-            var sdiv = el('div', 'fp-item fp-control fp-bar-item fp-search-item');
-            sdiv.dataset.id = itemKey(sItem);
-            sdiv.appendChild(createControl(sItem, 'SearchStringAddition', ctx));
-            var moreEl = toolbar.querySelector('.fp-more-item');
-            if (moreEl) toolbar.insertBefore(sdiv, moreEl);
-            else toolbar.appendChild(sdiv);
+        /* CommandBarLocation=None means the table has no bar at all; Bottom
+         * moves it below the grid. Everything else keeps 1C's default Top. */
+        var tblBarLoc = commandBarLocation(item);
+        var toolbar = null;
+        if (tblBarLoc !== 'none') {
+            toolbar = el('div', 'fp-table-toolbar fp-commandbar');
+            var barSrc = item.autoCommandBar || { tag: 'AutoCommandBar', childItems: [], properties: {} };
+            var barKids = tableBarItems(item, ctx && ctx.model);
+            renderPreview(barKids, toolbar, ctx, barSrc);
+            if (item.searchStringAddition && !additionHidden(item, 'SearchStringLocation')) {
+                var sItem = item.searchStringAddition;
+                var sdiv = el('div', 'fp-item fp-control fp-bar-item fp-search-item');
+                sdiv.dataset.id = itemKey(sItem);
+                sdiv.appendChild(createControl(sItem, 'SearchStringAddition', ctx));
+                var moreEl = toolbar.querySelector('.fp-more-item');
+                if (moreEl) toolbar.insertBefore(sdiv, moreEl);
+                else toolbar.appendChild(sdiv);
+            }
+            if (!toolbar.querySelector('.fp-more-item')) {
+                var moreBtn = el('button', 'fp-button fp-popup');
+                moreBtn.disabled = true;
+                moreBtn.type = 'button';
+                moreBtn.textContent = 'Еще ▾';
+                var moreWrap = el('div', 'fp-item fp-control fp-bar-item fp-more-item');
+                moreWrap.appendChild(moreBtn);
+                toolbar.appendChild(moreWrap);
+            }
+            pinCommandBarTail(toolbar);
+            if (tblBarLoc !== 'bottom') wrap.appendChild(toolbar);
         }
-        if (!toolbar.querySelector('.fp-more-item')) {
-            var moreBtn = el('button', 'fp-button fp-popup');
-            moreBtn.disabled = true;
-            moreBtn.type = 'button';
-            moreBtn.textContent = 'Еще ▾';
-            var moreWrap = el('div', 'fp-item fp-control fp-bar-item fp-more-item');
-            moreWrap.appendChild(moreBtn);
-            toolbar.appendChild(moreWrap);
-        }
-        pinCommandBarTail(toolbar);
-        wrap.appendChild(toolbar);
         if (item.viewStatusAddition && !additionHidden(item, 'ViewStatusLocation')) {
             wrap.appendChild(createControl(item.viewStatusAddition, 'ViewStatusAddition', ctx));
         }
@@ -1913,15 +2469,57 @@ function createControl(item, tag, ctx) {
         if (!cols.length) topTr.appendChild(el('th', '', label || item.name || 'Таблица'));
         thead.appendChild(topTr);
         if (botTr && botTr.children.length) thead.appendChild(botTr);
-        tbl.appendChild(thead);
+        /* Header=false hides the column strip entirely. */
+        var showHeader = !isFalse(prop(item, ['Header', 'Шапка']));
+        if (showHeader) tbl.appendChild(thead);
+        else tableWrap.classList.add('fp-table-noheader');
+        if (isFalse(prop(item, ['VerticalLines', 'ВертикальныеЛинии'])))
+            tableWrap.classList.add('fp-table-novlines');
+        if (isFalse(prop(item, ['HorizontalLines', 'ГоризонтальныеЛинии'])))
+            tableWrap.classList.add('fp-table-nohlines');
+        if (isTrue(prop(item, ['UseAlternationRowColor', 'ЧередованиеЦветовСтрок'])))
+            tableWrap.classList.add('fp-table-alt-rows');
+        var isTree = tableIsTree(item);
         var tbody = document.createElement('tbody');
-        var tr = document.createElement('tr');
         var nCols = Math.max(1, leafs.length);
-        for (var ei = 0; ei < nCols; ei++) tr.appendChild(el('td', 'fp-table-empty', ''));
-        tbody.appendChild(tr);
+        /* HeightInTableRows is the height 1C reserves for the grid, in rows. */
+        var nRows = parseInt(prop(item, ['HeightInTableRows', 'ВысотаВСтрокахТаблицы']), 10);
+        nRows = nRows > 0 ? Math.min(nRows, 15) : 1;
+        for (var ri = 0; ri < nRows; ri++) {
+            var tr = document.createElement('tr');
+            for (var ei = 0; ei < nCols; ei++) {
+                var td = el('td', 'fp-table-empty', '');
+                if (leafs[ei] && isTrue(prop(leafs[ei], ['CellHyperlink', 'ГиперссылкаЯчейки'])))
+                    td.classList.add('fp-cell-link');
+                /* Without a header row nothing else carries the column widths. */
+                if (!showHeader && ri === 0 && leafs[ei])
+                    td.style.minWidth = columnWidthPx(leafs[ei], ctx) + 'px';
+                if (ei === 0 && isTree)
+                    td.appendChild(el('span', 'fp-tree-toggle', treeExpanded(item) ? '▾' : '▸'));
+                tr.appendChild(td);
+            }
+            tbody.appendChild(tr);
+        }
         tbl.appendChild(tbody);
+        /* Footer=true adds the totals strip; only columns that opt in show a cell. */
+        if (isTrue(prop(item, ['Footer', 'Подвал']))) {
+            var tfoot = document.createElement('tfoot');
+            var ftr = document.createElement('tr');
+            for (var fi = 0; fi < nCols; fi++) {
+                var col = leafs[fi];
+                var inFooter = col && (isTrue(prop(col, ['ShowInFooter', 'ПоказыватьВПодвале']))
+                    || prop(col, ['FooterDataPath', 'ПутьКДаннымПодвала'])
+                    || prop(col, ['FooterText', 'ТекстПодвала']));
+                var ftd = el('td', 'fp-table-footer-cell',
+                    inFooter ? plainFormattedText(prop(col, ['FooterText', 'ТекстПодвала'])) : '');
+                ftr.appendChild(ftd);
+            }
+            tfoot.appendChild(ftr);
+            tbl.appendChild(tfoot);
+        }
         tableWrap.appendChild(tbl);
         wrap.appendChild(tableWrap);
+        if (toolbar && tblBarLoc === 'bottom') wrap.appendChild(toolbar);
         wrap._tableCols = leafs;
     } else if (tag === 'Page' || tag === 'Pages') {
         var pageBlock = el('div', tag === 'Pages' ? 'fp-group-block' : 'fp-page-block');
@@ -1956,7 +2554,12 @@ function createControl(item, tag, ctx) {
                 var groupKey = itemKey(item);
                 var collapsed = Object.prototype.hasOwnProperty.call(collapsedGroupByKey, groupKey)
                     ? !!collapsedGroupByKey[groupKey] : initiallyCollapsed(item);
-                var collapseBtn = el('button', 'fp-collapsible-title');
+                /* ControlRepresentation=Picture leaves the caption plain and puts
+                 * the whole control in the +/- picture; the default draws the
+                 * caption as the hyperlink that opens the group. */
+                var repPicture = /picture|картинк/i.test(prop(item, ['ControlRepresentation', 'ОтображениеУправления']))
+                    && !/hyperlink|гиперссылк/i.test(prop(item, ['ControlRepresentation', 'ОтображениеУправления']));
+                var collapseBtn = el('button', 'fp-collapsible-title' + (repPicture ? '' : ' fp-collapsible-link'));
                 collapseBtn.type = 'button';
                 collapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
                 collapseBtn.appendChild(el('span', 'fp-collapse-arrow', collapsed ? '▸' : '▾'));
@@ -1973,6 +2576,9 @@ function createControl(item, tag, ctx) {
             }
         }
         var kids = el('div', popup ? 'fp-popup-group-body' : (collapsible ? 'fp-collapsible-body' : ''));
+        /* United=false keeps the group's children as separate controls instead of
+         * gluing them into one block. */
+        if (isFalse(prop(item, ['United', 'Объединять']))) kids.classList.add('fp-group-split');
         group.appendChild(kids);
         wrap.appendChild(group);
         wrap._childBox = kids;
@@ -2046,7 +2652,7 @@ function renderPages(pagesNode, outerEl, meta, ctx) {
             ev.preventDefault();
             ev.stopPropagation();
             activePageIdByPagesKey[pagesKey] = pid;
-            if (ctx && ctx.root && ctx.model) renderPreview(displayItems(ctx.model), ctx.root, ctx, null);
+            if (ctx && ctx.root && ctx.model) renderPreview(displayItems(ctx.model), ctx.root, ctx, ctx.model);
             selectIn(ctx.root, pid, ctx);
             if (ctx && ctx.onSelect) ctx.onSelect(pageItem);
         });
@@ -2189,6 +2795,7 @@ function renderPreview(items, parentEl, ctx, parentItem) {
         var control = createControl(item, tag, ctx);
         div.appendChild(control);
         applyItemMetrics(div, item, tag, parentMeta, ctx);
+        applyTooltip(div, item, inBar);
         bindSelect(div, item, ctx);
         if (tag === 'Popup' && control._popupBtn) bindPopupToggle(control, control._popupBtn, ctx, item);
         if (isPopUpGroup(item) && control._popupTitleBtn)
@@ -2282,6 +2889,13 @@ function collectFieldLabels(box, deep) {
             continue;
         }
         if (!deep || !n.classList.contains('fp-container')) continue;
+        /* A Pages item's own subtree reuses the .fp-children class on the
+         * active page's panel (deep inside .fp-pages-outer), several levels
+         * below this direct child. querySelector() would reach right through
+         * to it and pull that page's field labels into this equalization
+         * pass, so root-level label widths would shift with whichever tab is
+         * active. Pages already equalizes its own panel separately. */
+        if (n.dataset && n.dataset.tag === 'Pages') continue;
         var inner = n.querySelector('.fp-children');
         if (!inner) continue;
         if (inner.classList.contains('fp-children-horizontal')) {
@@ -2317,6 +2931,7 @@ function equalizeAcrossColumns(box) {
     for (var i = 0; i < box.children.length; i++) {
         var n = box.children[i];
         if (!n.classList || !n.classList.contains('fp-container')) continue;
+        if (n.dataset && n.dataset.tag === 'Pages') continue;
         var inner = n.querySelector('.fp-children-vertical');
         if (!inner) continue;
         var col = collectFieldLabels(inner, true);
@@ -2480,6 +3095,8 @@ function renderMeta(model, host) {
 
 function render(model, container, options) {
     options = options || {};
+    if (container._fpCtx && container._fpCtx.root)
+        closeAllPopups(container._fpCtx.root);
     container.innerHTML = '';
     container.className = 'fp-root fp-taxi fp-light';
     var body = el('div', 'fp-body');
@@ -2513,7 +3130,8 @@ function render(model, container, options) {
         var popupRoot = function () { return container.querySelector('#fp-canvas') || container; };
         container._fpPopupDismiss = function (ev) {
             var t = ev.target;
-            if (t && t.closest && (t.closest('.fp-popup-wrap') || t.closest('.fp-popup-group'))) return;
+            if (t && t.closest && (t.closest('.fp-popup-wrap') || t.closest('.fp-popup-group')
+                || t.closest('.fp-popup-menu') || t.closest('.fp-popup-group-body'))) return;
             closeAllPopups(popupRoot());
         };
         container._fpPopupKey = function (ev) {
@@ -2523,31 +3141,56 @@ function render(model, container, options) {
         doc.addEventListener('click', container._fpPopupDismiss, true);
         doc.addEventListener('keydown', container._fpPopupKey);
     }
+    /* The form window caption: ShowTitle=false hides it, and an empty Title with
+     * AutoTitle=false means 1C generates nothing either. */
+    var formTitle = rawTitle(model);
+    if (formTitle && !isFalse(prop(model, ['ShowTitle', 'ПоказыватьЗаголовок']))) {
+        var cap = el('div', 'fp-form-title');
+        setFormattedText(cap, formTitle, false);
+        container.insertBefore(cap, body);
+    }
+    /* Form.Width is a character count, and 1C really does open such a form that
+     * narrow. Only plausible dialog widths are honoured: a few forms carry a
+     * number that is clearly not characters, and squeezing on that would lie. */
+    var fwChars = parseInt(prop(model, ['Width', 'Ширина']), 10);
+    if (fwChars > 0 && fwChars <= 200) body.style.maxWidth = (fwChars * CHAR_PX + 40) + 'px';
     if (!items.length) {
         body.className = 'fp-body fp-empty';
         body.innerHTML = '<p class="fp-empty-title">Превью формы</p><p class="fp-empty-hint">В Form.xml нет элементов ChildItems.</p>';
     } else {
-        renderPreview(items, body, ctx, null);
+        /* The root is laid out by the Form's own Group/spacing/ChildItemsWidth,
+         * exactly like a UsualGroup - previously these were dropped. */
+        var rootMeta = layoutMeta(model);
+        applyLayout(body, rootMeta);
+        renderPreview(items, body, ctx, model);
     }
 }
 
 function revealPopupAncestors(root, node) {
+    if (!root || !node) return;
+    var wrap = null;
+    var group = null;
     var n = node;
     while (n && n !== root) {
-        if (n.classList && n.classList.contains('fp-popup-group')) {
-            var wrap = n.parentNode;
-            while (wrap && wrap !== root && !(wrap.classList && wrap.classList.contains('fp-control-wrap')))
-                wrap = wrap.parentNode;
-            var btn = n.querySelector('.fp-popup-group-title');
-            var body = n.querySelector('.fp-popup-group-body');
-            closeAllPopups(root);
-            n.classList.add('fp-popup-open');
-            if (wrap && wrap.classList) wrap.classList.add('fp-popup-open');
-            positionFixedPopup(btn, body, 320);
-            break;
-        }
+        if (n.classList && n.classList.contains('fp-popup-wrap')) { wrap = n; break; }
+        if (n.classList && n.classList.contains('fp-popup-group')) { group = n; break; }
         n = n.parentNode;
     }
+    if (!wrap && node.querySelector)
+        wrap = node.querySelector('.fp-popup-wrap');
+    if (wrap) {
+        var btn = wrap.querySelector('.fp-popup') || wrap.querySelector('.fp-button');
+        var menu = wrap.querySelector('.fp-popup-menu');
+        openPopupPanel(root, wrap, btn, menu, 180);
+        return;
+    }
+    if (!group) return;
+    var gWrap = group.parentNode;
+    while (gWrap && gWrap !== root && !(gWrap.classList && gWrap.classList.contains('fp-control-wrap')))
+        gWrap = gWrap.parentNode;
+    var gBtn = group.querySelector('.fp-popup-group-title');
+    var gBody = group.querySelector('.fp-popup-group-body');
+    openPopupPanel(root, group, gBtn, gBody, 320, gWrap);
 }
 
 function highlight(container, id) {
@@ -2558,12 +3201,22 @@ function highlight(container, id) {
     }
     var canvas = container.querySelector('#fp-canvas') || (ctx && ctx.root) || container;
     var hit = selectIn(canvas, id, ctx);
-    if (hit) revealPopupAncestors(canvas, hit);
-    if (hit && hit.scrollIntoView) {
-        try { hit.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
-        catch (e) { hit.scrollIntoView(); }
+    var entry = null;
+    if (canvas && canvas.querySelector)
+        entry = canvas.querySelector('.fp-popup-entry[data-id="' + cssEscape(id) + '"]');
+    revealPopupAncestors(canvas, entry || hit);
+    var focus = entry || hit;
+    if (focus && focus.scrollIntoView) {
+        try { focus.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+        catch (e) { focus.scrollIntoView(); }
     }
-    return hit;
+    return focus;
+}
+
+function dismiss(container) {
+    if (!container) return;
+    var ctx = container._fpCtx;
+    closeAllPopups((ctx && ctx.root) || container);
 }
 
 root.FormPreview = {
@@ -2576,6 +3229,7 @@ root.FormPreview = {
     outlineExpandTo: outlineExpandTo,
     outlineCollapseAll: outlineCollapseAll,
     highlight: highlight,
+    dismiss: dismiss,
     itemKey: itemKey,
     iconFor: iconFor,
     _test: {
@@ -2597,6 +3251,22 @@ root.FormPreview = {
         tableColumns: tableColumns,
         columnCaption: columnCaption,
         tableStdCommands: tableStdCommands,
+        tableIsList: tableIsList,
+        tableIsTree: tableIsTree,
+        treeExpanded: treeExpanded,
+        parseFont: parseFont,
+        fontCss: fontCss,
+        commandBarLocation: commandBarLocation,
+        tooltipRepresentation: tooltipRepresentation,
+        tooltipText: tooltipText,
+        isTumbler: isTumbler,
+        normPictureSize: normPictureSize,
+        absoluteColor: absoluteColor,
+        charHeight: charHeight,
+        tableBarItems: tableBarItems,
+        isCreateBasedOnPopup: isCreateBasedOnPopup,
+        createBasedOnButtons: createBasedOnButtons,
+        basedOnTitle: basedOnTitle,
         showGroupTitle: showGroupTitle,
         groupBehavior: groupBehavior,
         initiallyCollapsed: initiallyCollapsed,
@@ -2604,6 +3274,7 @@ root.FormPreview = {
         plainFormattedText: plainFormattedText,
         isPopUpGroup: isPopUpGroup,
         applyLabelWidth: applyLabelWidth,
+        collectFieldLabels: collectFieldLabels,
         fieldKind: fieldKind,
         isInCellGroup: isInCellGroup,
         additionHidden: additionHidden,
@@ -2613,12 +3284,16 @@ root.FormPreview = {
         collectAdditionalBarItems: collectAdditionalBarItems,
         popupHasCommands: popupHasCommands,
         popupMenuEntries: popupMenuEntries,
+        closeAllPopups: closeAllPopups,
+        revealPopupAncestors: revealPopupAncestors,
         parseObjectMeta: parseObjectMeta,
         buildCaptionIndex: buildCaptionIndex,
         captionForPath: captionForPath,
         objectMetaCandidates: objectMetaCandidates,
         resolveButtonRep: resolveButtonRep,
         wantsVStretch: wantsVStretch,
+        marksIncomplete: marksIncomplete,
+        hasButtonIcon: hasButtonIcon,
         isMultilineField: isMultilineField,
         isUnlimitedString: isUnlimitedString,
         fieldHeight: fieldHeight,

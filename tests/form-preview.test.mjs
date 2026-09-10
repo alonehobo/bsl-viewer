@@ -140,6 +140,55 @@ test('hidden title is not shown on label fields', () => {
   assert.equal(T.displayLabel(item, null, 'LabelField'), '');
 });
 
+test('a label field keeps its title even when it handles URLProcessing', () => {
+  const shown = {
+    tag: 'LabelField',
+    name: 'НадписьИзделие',
+    properties: { DataPath: 'НадписьИзделие' },
+    events: ['URLProcessing']
+  };
+  assert.equal(T.displayLabel(shown, null, 'LabelField'), 'Надпись Изделие');
+  const hidden = Object.assign({}, shown, {
+    properties: { DataPath: 'НадписьИзделие', TitleLocation: 'None' }
+  });
+  assert.equal(T.displayLabel(hidden, null, 'LabelField'), '');
+});
+
+test('AutoMarkIncomplete is honoured only when Form.xml states it', () => {
+  assert.equal(T.marksIncomplete({ properties: { AutoMarkIncomplete: 'true' } }), true);
+  assert.equal(T.marksIncomplete({ properties: { AutoMarkIncomplete: 'false' } }), false);
+  assert.equal(T.marksIncomplete({ properties: { DataPath: 'Объект.Партнер' } }), false);
+});
+
+test('a picture button without a picture falls back to text', () => {
+  const ctx = { commandTitles: { ЗакрытьЗаказ: 'Закрыть заказ' }, commands: {} };
+  const noPicture = {
+    tag: 'Button',
+    name: 'ЗакрытьЗаказ',
+    properties: { Representation: 'PictureAndText', CommandName: 'Form.Command.ЗакрытьЗаказ' }
+  };
+  assert.equal(T.hasButtonIcon(noPicture, ctx), false);
+  assert.equal(T.resolveButtonRep(noPicture, ctx), 'text');
+  const withPicture = {
+    tag: 'Button',
+    name: 'СчитатьКарту',
+    properties: { Representation: 'Picture', Picture: 'CommonPicture.СчитатьКартуЛояльности' }
+  };
+  assert.equal(T.hasButtonIcon(withPicture, ctx), true);
+  assert.equal(T.resolveButtonRep(withPicture, ctx), 'picture');
+  assert.equal(T.iconIdFromRef('CommonPicture.СчитатьКартуЛояльности'), 'credit-card');
+});
+
+test('unmapped configuration pictures get a neutral placeholder', () => {
+  assert.equal(T.iconIdFromRef('CommonPicture.ОтгрузкаЗапрещена'), 'ban');
+  assert.equal(T.iconIdFromRef('CommonPicture.ПревышениеЗаказа'), 'alert-triangle');
+  assert.equal(T.iconIdFromRef('CommonPicture.Предупреждение'), 'alert-triangle');
+  assert.equal(T.iconIdFromRef('CommonPicture.ЧтоТоСовсемЧужое'), 'photo');
+  /* «вес» on its own also matched Известное, Ведомость, Повесить … */
+  assert.equal(T.iconIdFromRef('CommonPicture.НеизвестноеДействие'), 'photo');
+  assert.equal(T.iconIdFromRef('CommonPicture.ВесыЭлектронные'), 'scale');
+});
+
 test('checkbox rows are skipped by label equalization', () => {
   const row = { classList: { contains: (c) => c === 'fp-check-row' } };
   assert.equal(T.fieldRowSkipped(row), true);
@@ -210,10 +259,199 @@ test('table std commands respect ChangeRowSet/ChangeRowOrder', () => {
   assert.equal(T.tableStdCommands(noFill).length, 0);
   const normal = { properties: {}, autoCommandBar: { properties: {}, childItems: [] } };
   assert.ok(T.tableStdCommands(normal).some((b) => b.properties.Title === 'Добавить'));
+  assert.equal(T.tableStdCommands(normal).some((b) => b.properties.Title === 'Создать'), false);
   const list = { properties: { Representation: 'List' }, autoCommandBar: { properties: {}, childItems: [] } };
   const listCmds = T.tableStdCommands(list);
-  assert.ok(listCmds.some((b) => b.properties.Title === 'Добавить'));
-  assert.equal(listCmds.some((b) => /вверх|вниз/i.test(b.properties.Title || '')), false);
+  assert.equal(listCmds.map((b) => b.properties.Title).join(','), 'Создать,Скопировать');
+  assert.equal(T.resolveButtonRep(listCmds[0]), 'text');
+  assert.equal(T.resolveButtonRep(listCmds[1]), 'picture');
+  assert.equal(listCmds.some((b) => /вверх|вниз|Добавить/i.test(b.properties.Title || '')), false);
+});
+
+test('list table from DynamicList uses Create and Copy icon', () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core" version="2.20">
+  <ChildItems>
+    <Table name="Список" id="1">
+      <DataPath>Список</DataPath>
+      <AutoCommandBar name="СписокКоманднаяПанель" id="-1"/>
+      <ViewStatusAddition name="СписокСостояниеПросмотра" id="2">
+        <AdditionSource>
+          <Item>Список</Item>
+          <Type>ViewStatusRepresentation</Type>
+        </AdditionSource>
+      </ViewStatusAddition>
+    </Table>
+  </ChildItems>
+  <Attributes>
+    <Attribute name="Список" id="1">
+      <Type>
+        <v8:Type>v8:DynamicList</v8:Type>
+      </Type>
+      <MainAttribute>true</MainAttribute>
+    </Attribute>
+  </Attributes>
+</Form>`;
+  const parsed = FP.parse(xml);
+  assert.ok(!parsed.error, parsed.error);
+  const table = parsed.model.childItemsRoot[0];
+  assert.equal(T.tableIsList(table, parsed.model), true);
+  const cmds = T.tableStdCommands(table, parsed.model);
+  assert.equal(cmds[0].properties.Title, 'Создать');
+  assert.equal(cmds[1].properties.Title, 'Скопировать');
+  assert.equal(T.resolveButtonRep(cmds[1]), 'picture');
+});
+
+test('empty Create based on popup is filled from CommandInterface', () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core" version="2.20">
+  <ChildItems>
+    <Table name="Список" id="1">
+      <Representation>List</Representation>
+      <DataPath>Список</DataPath>
+      <AutoCommandBar name="СписокКоманднаяПанель" id="-1">
+        <ChildItems>
+          <Popup name="ПодменюСоздатьНаОсновании" id="2">
+            <Title>
+              <v8:item><v8:lang>ru</v8:lang><v8:content>Создать на основании</v8:content></v8:item>
+            </Title>
+            <Representation>Picture</Representation>
+            <ChildItems>
+              <ButtonGroup name="ПодменюСоздатьНаОснованииОбычное" id="3"/>
+            </ChildItems>
+          </Popup>
+          <Popup name="ГруппаУстановитьСтатус" id="4">
+            <Title>
+              <v8:item><v8:lang>ru</v8:lang><v8:content>Установить статус</v8:content></v8:item>
+            </Title>
+            <ChildItems>
+              <Button name="УстановитьСтатусДействует" id="5">
+                <CommandName>Form.Command.УстановитьСтатусДействует</CommandName>
+              </Button>
+            </ChildItems>
+          </Popup>
+        </ChildItems>
+      </AutoCommandBar>
+    </Table>
+  </ChildItems>
+  <Attributes>
+    <Attribute name="Список" id="1">
+      <Type><v8:Type>v8:DynamicList</v8:Type></Type>
+      <MainAttribute>true</MainAttribute>
+    </Attribute>
+  </Attributes>
+  <Commands>
+    <Command name="УстановитьСтатусДействует" id="1">
+      <Title>
+        <v8:item><v8:lang>ru</v8:lang><v8:content>Действует</v8:content></v8:item>
+      </Title>
+    </Command>
+  </Commands>
+  <CommandInterface>
+    <CommandBar>
+      <Item>
+        <Command>Document.СчетНаОплатуКлиенту.StandardCommand.CreateBasedOn</Command>
+        <CommandGroup>FormCommandBarCreateBasedOn</CommandGroup>
+      </Item>
+      <Item>
+        <Command>CommonCommand.ИнтеграцияС1СДокументооборотСоздатьПисьмо</Command>
+        <CommandGroup>FormCommandBarCreateBasedOn</CommandGroup>
+        <DefaultVisible>false</DefaultVisible>
+      </Item>
+      <Item>
+        <Command>CommonCommand.СозданиеСвязанныхОбъектов</Command>
+        <CommandGroup>FormCommandBarCreateBasedOn</CommandGroup>
+      </Item>
+    </CommandBar>
+  </CommandInterface>
+</Form>`;
+  const parsed = FP.parse(xml);
+  assert.ok(!parsed.error, parsed.error);
+  const table = parsed.model.childItemsRoot[0];
+  const basedOn = table.autoCommandBar.childItems.find((it) => it.name === 'ПодменюСоздатьНаОсновании');
+  const status = table.autoCommandBar.childItems.find((it) => it.name === 'ГруппаУстановитьСтатус');
+  assert.equal(T.popupHasCommands(basedOn), true);
+  assert.equal(T.popupHasCommands(status), true);
+  assert.equal(T.resolveButtonRep(basedOn), 'text');
+  const basedTitles = T.popupMenuEntries(basedOn).map((e) => e.properties.Title);
+  assert.ok(basedTitles.some((t) => /Счет/i.test(t)), basedTitles.join(', '));
+  assert.ok(basedTitles.some((t) => /Связанных/i.test(t)), basedTitles.join(', '));
+  assert.equal(basedTitles.some((t) => /Документооборот/i.test(t)), false);
+  const ctx = { commands: {}, commandTitles: { УстановитьСтатусДействует: 'Действует' } };
+  parsed.model.commands.forEach((c) => { ctx.commands[c.name] = c; ctx.commandTitles[c.name] = T.titleOf(c); });
+  assert.equal(T.titleOf(status.childItems[0], ctx), 'Действует');
+  const bar = T.tableBarItems(table, parsed.model);
+  assert.ok(bar.some((it) => it.name === 'ГруппаУстановитьСтатус'));
+  assert.ok(bar.some((it) => it.name === 'ПодменюСоздатьНаОсновании' && T.popupHasCommands(it)));
+});
+
+test('outline highlight opens command-bar submenu and keeps the entry selected', () => {
+  function classList(init) {
+    const s = new Set(String(init || '').split(/\s+/).filter(Boolean));
+    return {
+      contains: (c) => s.has(c),
+      add: (c) => { s.add(c); },
+      remove: (c) => { s.delete(c); }
+    };
+  }
+  const oldPopup = { classList: classList('fp-popup-open') };
+  let entryScrolled = false;
+  let entry;
+  let wrap;
+  const body = {
+    appendChild: (node) => { node.parentNode = body; }
+  };
+  const root = {
+    classList: classList(''),
+    parentNode: null,
+    ownerDocument: { body },
+    querySelectorAll: (sel) => sel === '.fp-popup-open'
+      ? [oldPopup, wrap].filter((node) => node && node.classList.contains('fp-popup-open'))
+      : [],
+    querySelector: (sel) => String(sel).startsWith('.fp-popup-entry') ? entry : null
+  };
+  const btn = {
+    classList: classList('fp-button fp-popup'),
+    getBoundingClientRect: () => ({ left: 10, right: 90, top: 10, bottom: 34, width: 80, height: 24 })
+  };
+  const menu = { classList: classList('fp-popup-menu'), style: {}, offsetWidth: 180, offsetHeight: 80, children: [] };
+  wrap = {
+    classList: classList('fp-control-wrap fp-popup-wrap'),
+    parentNode: root,
+    appendChild: (node) => { node.parentNode = wrap; },
+    querySelector: (sel) => {
+      if (String(sel).indexOf('fp-popup-menu') >= 0) return menu;
+      if (String(sel).indexOf('fp-popup') >= 0 || String(sel).indexOf('fp-button') >= 0) return btn;
+      return null;
+    }
+  };
+  entry = {
+    classList: classList('fp-popup-entry'),
+    parentNode: menu,
+    scrollIntoView: () => { entryScrolled = true; }
+  };
+  menu.parentNode = wrap;
+  btn.parentNode = wrap;
+  const container = {
+    _fpCtx: { root, selectedId: '' },
+    querySelector: (sel) => sel === '#fp-canvas' ? root : null
+  };
+  const selected = FP.highlight(container, '42');
+
+  assert.equal(selected, entry);
+  assert.equal(container._fpCtx.selectedId, '42');
+  assert.equal(wrap.classList.contains('fp-popup-open'), true);
+  assert.equal(oldPopup.classList.contains('fp-popup-open'), false);
+  assert.equal(entry.classList.contains('selected'), true);
+  assert.equal(entryScrolled, true);
+  assert.equal(menu.parentNode, body);
+  assert.equal(menu.style.position, 'fixed');
+  assert.equal(menu.style.top, '34px');
+
+  FP.dismiss(container);
+  assert.equal(wrap.classList.contains('fp-popup-open'), false);
+  assert.equal(menu.parentNode, wrap);
+  assert.equal(menu.style.position, '');
 });
 
 test('empty command-bar popups are not treated as main-row items', () => {
@@ -555,6 +793,7 @@ test('standard WriteAndClose is a default text button, not an icon', () => {
 test('platform pictures map to Tabler icon ids', () => {
   assert.equal(T.iconIdFromRef('StdPicture.Write'), 'save');
   assert.equal(T.iconIdFromRef('StdPicture.Post'), 'file-check');
+  assert.equal(T.iconIdFromRef('StdPicture.Copy'), 'file-plus');
   assert.equal(T.iconIdFromRef('StdPicture.Print'), 'printer');
   assert.equal(T.iconIdFromRef('StdPicture.MoveUp'), 'arrow-up');
   assert.equal(T.iconIdFor({
@@ -810,6 +1049,42 @@ if (fs.existsSync(erpForm)) {
   });
 }
 
+const erpListForm = 'E:\\Bases\\ERP_DESIGNER\\src\\cf\\Catalogs\\ДоговорыКонтрагентов\\Forms\\ФормаСписка\\Ext\\Form.xml';
+if (fs.existsSync(erpListForm)) {
+  test('ERP ДоговорыКонтрагентов list: status submenu and Create based on', () => {
+    const xml = fs.readFileSync(erpListForm, 'utf8');
+    const parsed = FP.parse(xml);
+    assert.ok(!parsed.error, parsed.error);
+    function findByName(items, name) {
+      for (const it of items || []) {
+        if (it.name === name) return it;
+        const hit = findByName(it.childItems, name)
+          || findByName(it.autoCommandBar && it.autoCommandBar.childItems, name);
+        if (hit) return hit;
+      }
+      return null;
+    }
+    const status = findByName(parsed.model.childItemsRoot, 'ГруппаУстановитьСтатус');
+    assert.ok(status, 'ГруппаУстановитьСтатус');
+    assert.equal(T.popupHasCommands(status), true);
+    const statusTitles = T.popupMenuEntries(status).map((e) => T.titleOf(e, {
+      commandTitles: Object.fromEntries((parsed.model.commands || []).map((c) => [c.name, T.titleOf(c)]))
+    }));
+    assert.ok(statusTitles.some((t) => /Не согласован/i.test(t)), statusTitles.join(', '));
+    assert.ok(statusTitles.some((t) => /Действует/i.test(t)), statusTitles.join(', '));
+    assert.ok(statusTitles.some((t) => /Закрыт/i.test(t)), statusTitles.join(', '));
+    const basedOn = findByName(parsed.model.childItemsRoot, 'ПодменюСоздатьНаОсновании');
+    assert.ok(basedOn, 'ПодменюСоздатьНаОсновании');
+    assert.equal(T.popupHasCommands(basedOn), true);
+    assert.equal(T.resolveButtonRep(basedOn), 'text');
+    const basedTitles = T.popupMenuEntries(basedOn).map((e) => e.properties.Title);
+    assert.ok(basedTitles.some((t) => /Счет/i.test(t)), basedTitles.join(', '));
+    const table = findByName(parsed.model.childItemsRoot, 'Список');
+    const bar = T.tableBarItems(table, parsed.model);
+    assert.equal(bar.some((it) => it.name === 'ПодменюПечать' && !T.popupHasCommands(it)), true);
+  });
+}
+
 const erpAdvanceForm = 'E:\\Bases\\ERP_DESIGNER\\src\\cf\\Documents\\АвансовыйОтчет\\Forms\\ФормаДокумента\\Ext\\Form.xml';
 if (fs.existsSync(erpAdvanceForm)) {
   test('ERP АвансовыйОтчет: print page is vertical; Итого group is PopUp', () => {
@@ -905,3 +1180,226 @@ test('collapsing one group does not hide a sibling group', () => {
   assert.equal(FP.outlineHidden(items, 2, collapsed), false);
   assert.equal(FP.outlineHidden(items, 3, collapsed), false);
 });
+
+/* --- Element properties that shape the look: fonts, form root, tables --- */
+
+test('Font and TitleFont are read from attributes, not from text', () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core">
+  <ChildItems>
+    <LabelDecoration name="Итого">
+      <Title><v8:item><v8:lang>ru</v8:lang><v8:content>Итого</v8:content></v8:item></Title>
+      <Font faceName="Arial" height="12" bold="true" italic="false" underline="false" kind="Absolute" scale="100"/>
+    </LabelDecoration>
+    <InputField name="Сумма">
+      <TitleFont ref="style:ВажнаяНадписьШрифт" kind="StyleItem"/>
+    </InputField>
+  </ChildItems>
+</Form>`;
+  const parsed = FP.parse(xml);
+  const [label, input] = parsed.model.childItemsRoot;
+  assert.equal(label.properties.FontSpec.bold, true);
+  assert.equal(label.properties.FontSpec.height, 12);
+  const css = { ...T.fontCss(label.properties.FontSpec) };
+  assert.equal(css.fontWeight, '700');
+  assert.equal(css.fontSize, '16px');
+  /* A StyleItem font carries no values, so only what the style name states wins. */
+  const titleCss = { ...T.fontCss(input.properties.TitleFontSpec) };
+  assert.equal(titleCss.fontWeight, '700');
+  assert.equal(titleCss.fontSize, undefined);
+});
+
+test('a font with no traits at all is dropped', () => {
+  const xml = `<?xml version="1.0"?><Form xmlns="http://v8.1c.ru/8.3/xcf/logform"><ChildItems>
+    <LabelDecoration name="X"><Font kind="Absolute"/></LabelDecoration></ChildItems></Form>`;
+  const parsed = FP.parse(xml);
+  assert.equal(parsed.model.childItemsRoot[0].properties.FontSpec, undefined);
+});
+
+test('the Form root keeps its own properties', () => {
+  const xml = `<?xml version="1.0"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core">
+  <Title><v8:item><v8:lang>ru</v8:lang><v8:content>Договор</v8:content></v8:item></Title>
+  <CommandBarLocation>Bottom</CommandBarLocation>
+  <Width>45</Width>
+  <ChildItems><InputField name="Номер"><DataPath>Объект.Номер</DataPath></InputField></ChildItems>
+  <AutoCommandBar name="ФормаКоманднаяПанель"><Autofill>false</Autofill>
+    <ChildItems><Button name="B"><Title><v8:item><v8:lang>ru</v8:lang><v8:content>Ок</v8:content></v8:item></Title></Button></ChildItems>
+  </AutoCommandBar>
+</Form>`;
+  const parsed = FP.parse(xml);
+  assert.equal(parsed.model.properties.Title, 'Договор');
+  assert.equal(parsed.model.properties.Width, '45');
+  assert.equal(T.commandBarLocation(parsed.model), 'bottom');
+  const items = T.displayItems(parsed.model);
+  /* Bottom moves the bar behind the children instead of ahead of them. */
+  assert.equal(items[items.length - 1].tag, 'AutoCommandBar');
+  assert.equal(items[0].tag, 'InputField');
+});
+
+test('CommandBarLocation=None drops the form command bar entirely', () => {
+  const xml = `<?xml version="1.0"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core">
+  <CommandBarLocation>None</CommandBarLocation>
+  <ChildItems><InputField name="Номер"/></ChildItems>
+  <AutoCommandBar name="ФормаКоманднаяПанель">
+    <ChildItems><Button name="B"><Title><v8:item><v8:lang>ru</v8:lang><v8:content>Ок</v8:content></v8:item></Title></Button></ChildItems>
+  </AutoCommandBar>
+</Form>`;
+  const parsed = FP.parse(xml);
+  const items = T.displayItems(parsed.model);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].tag, 'InputField');
+});
+
+test('a missing CommandBarLocation still puts the bar on top', () => {
+  const xml = `<?xml version="1.0"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core">
+  <ChildItems><InputField name="Номер"/></ChildItems>
+  <AutoCommandBar name="ФормаКоманднаяПанель">
+    <ChildItems><Button name="B"><Title><v8:item><v8:lang>ru</v8:lang><v8:content>Ок</v8:content></v8:item></Title></Button></ChildItems>
+  </AutoCommandBar>
+</Form>`;
+  const parsed = FP.parse(xml);
+  assert.equal(T.commandBarLocation(parsed.model), 'auto');
+  assert.equal(T.displayItems(parsed.model)[0].tag, 'AutoCommandBar');
+});
+
+test('ExtendedTooltip is kept beside the item, not among its children', () => {
+  const xml = `<?xml version="1.0"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" xmlns:v8="http://v8.1c.ru/8.1/data/core"><ChildItems>
+  <InputField name="Склад">
+    <ToolTipRepresentation>ShowBottom</ToolTipRepresentation>
+    <ExtendedTooltip name="СкладРасширеннаяПодсказка">
+      <Title><v8:item><v8:lang>ru</v8:lang><v8:content>Склад отгрузки</v8:content></v8:item></Title>
+    </ExtendedTooltip>
+  </InputField>
+</ChildItems></Form>`;
+  const parsed = FP.parse(xml);
+  const field = parsed.model.childItemsRoot[0];
+  assert.equal((field.childItems || []).length, 0);
+  assert.equal(T.tooltipText(field), 'Склад отгрузки');
+  assert.equal(T.tooltipRepresentation(field), 'bottom');
+});
+
+test('ToolTipRepresentation defaults to a hover title', () => {
+  assert.equal(T.tooltipRepresentation({ properties: {} }), 'auto');
+  assert.equal(T.tooltipRepresentation({ properties: { ToolTipRepresentation: 'None' } }), 'none');
+  assert.equal(T.tooltipRepresentation({ properties: { ToolTipRepresentation: 'Button' } }), 'button');
+});
+
+test('table lines, alternation and tree view are read as written', () => {
+  const table = {
+    tag: 'Table', name: 'Товары',
+    properties: {
+      Header: 'false', VerticalLines: 'false', UseAlternationRowColor: 'true',
+      HeightInTableRows: '5', CommandBarLocation: 'None', Representation: 'Tree',
+      InitialTreeView: 'ExpandTopLevel'
+    }
+  };
+  assert.equal(T.isFalse(table.properties.Header), true);
+  assert.equal(T.commandBarLocation(table), 'none');
+  assert.equal(T.tableIsTree(table), true);
+  assert.equal(T.treeExpanded(table), true);
+  assert.equal(T.treeExpanded({ properties: { InitialTreeView: 'NoExpand' } }), false);
+});
+
+test('tumbler checkbox and radio types are recognised, plain ones are not', () => {
+  assert.equal(T.isTumbler('Tumbler'), true);
+  assert.equal(T.isTumbler('Switcher'), true);
+  assert.equal(T.isTumbler('Auto'), false);
+  assert.equal(T.isTumbler('CheckBox'), false);
+  assert.equal(T.isTumbler(''), false);
+});
+
+test('only absolute colours become CSS; style names keep their keyword path', () => {
+  assert.equal(T.absoluteColor('#FFEECC'), '#FFEECC');
+  assert.equal(T.absoluteColor('255,128,0'), 'rgb(255,128,0)');
+  assert.equal(T.absoluteColor('style:ПоясняющийТекст'), '');
+});
+
+test('heights are counted in rows, widths in characters', () => {
+  assert.equal(T.charHeight('2'), 36);
+  assert.equal(T.charHeight(''), 0);
+  assert.equal(T.charHeight('0'), 0);
+});
+
+test('PictureSize is normalised to the modes 1C offers', () => {
+  assert.equal(T.normPictureSize('Proportionally'), 'proportionally');
+  assert.equal(T.normPictureSize('Stretch'), 'stretch');
+  assert.equal(T.normPictureSize('AutoSize'), 'autosize');
+  assert.equal(T.normPictureSize(''), '');
+});
+
+test('collectFieldLabels does not reach into a Pages item\'s active-page panel', () => {
+  /* Regression for the "Статус"/"переход права" header row widening when the
+   * user switches tabs: a Pages item's own subtree reuses the .fp-children
+   * class on the active page's panel, deep inside .fp-pages-outer. Before the
+   * fix, box.querySelector('.fp-children') reached straight through the Pages
+   * item to that panel and pulled the active page's own field labels into the
+   * root-level label-width pass - so the header's label width shifted with
+   * whichever tab happened to be open. */
+  function fakeNode(classes) {
+    const set = new Set(String(classes || '').split(/\s+/).filter(Boolean));
+    const n = {
+      classList: { contains: (c) => set.has(c) },
+      dataset: {},
+      children: [],
+      textContent: '',
+      querySelector(sel) {
+        const cls = String(sel).replace(/^\./, '');
+        const stack = this.children.slice();
+        while (stack.length) {
+          const cur = stack.shift();
+          if (cur.classList && cur.classList.contains(cls)) return cur;
+          if (cur.children && cur.children.length) stack.push(...cur.children);
+        }
+        return null;
+      }
+    };
+    return n;
+  }
+  function fieldControl(labelText) {
+    const control = fakeNode('fp-item fp-control');
+    const row = fakeNode('fp-field-row');
+    const label = fakeNode('fp-field-label');
+    label.textContent = labelText;
+    row.children = [label];
+    control.children = [row];
+    return control;
+  }
+
+  const statusRow = fakeNode('fp-children fp-children-horizontal');
+  statusRow.children = [fieldControl('Статус:'), fieldControl('переход права:')];
+  const statusGroup = fakeNode('fp-item fp-container');
+  statusGroup.children = [statusRow];
+
+  const activePagePanel = fakeNode('fp-children fp-children-vertical');
+  activePagePanel.children = [fieldControl('Адрес доставки для печати:')];
+  const panelWrap = fakeNode('fp-pages-panel-wrap');
+  panelWrap.children = [activePagePanel];
+  const pagesOuter = fakeNode('fp-pages-outer');
+  pagesOuter.children = [fakeNode('fp-pages-tablist'), panelWrap];
+  const pagesItem = fakeNode('fp-item fp-container');
+  pagesItem.dataset.tag = 'Pages';
+  pagesItem.children = [pagesOuter];
+
+  const root = fakeNode('');
+  root.children = [statusGroup, pagesItem];
+
+  const labels = T.collectFieldLabels(root, true);
+
+  assert.equal(labels.length, 1, 'only the header row\'s first label should be collected');
+  assert.equal(labels[0].textContent, 'Статус:');
+  assert.ok(!labels.some((l) => l.textContent === 'Адрес доставки для печати:'),
+    'the active page\'s own field labels must not leak into the header row\'s width pass');
+});
+
+if (fs.existsSync(erpForm)) {
+  test('ERP ДоговорыКонтрагентов: form root properties survive the parse', () => {
+    const parsed = FP.parse(fs.readFileSync(erpForm, 'utf8'));
+    assert.ok(!parsed.error, parsed.error);
+    assert.ok(parsed.model.properties, 'the Form root must carry properties');
+    assert.equal(typeof T.commandBarLocation(parsed.model), 'string');
+  });
+}

@@ -567,6 +567,18 @@ void CWebView2Host::ConfigureSettings()
         settings->put_IsStatusBarEnabled(FALSE);
         settings->put_AreDevToolsEnabled(FALSE);
         settings->put_IsBuiltInErrorPageEnabled(FALSE);
+
+        /* With DevTools disabled, WebView2 still reserves F12 (and other
+         * browser accelerators: Ctrl+F, Ctrl+P, F5, F7...) at the host level
+         * and never delivers the keydown to the page at all. Monaco's own
+         * F12 binding ("Go to Definition") is then silently unreachable.
+         * ICoreWebView2Settings3 lets accelerator keys pass through to the
+         * page instead of being swallowed. */
+        ICoreWebView2Settings3* settings3 = NULL;
+        if (SUCCEEDED(settings->QueryInterface(IID_PPV_ARGS(&settings3))) && settings3) {
+            settings3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
+            settings3->Release();
+        }
         settings->Release();
     }
 }
@@ -741,6 +753,13 @@ void CWebView2Host::SendCommand(const wchar_t* cmd)
     PostJson(json);
 }
 
+bool CWebView2Host::RequestClose()
+{
+    if (!mPageReady) return false;
+    SendCommand(L"confirmClose");
+    return true;
+}
+
 void CWebView2Host::Find(const std::wstring& text, bool matchCase, bool wholeWords, bool backwards, bool first)
 {
     if (!mPageReady) return;
@@ -883,6 +902,12 @@ void CWebView2Host::OnWebMessage(const std::wstring& msg)
 
     if (JsonFieldEquals(msg, L"cmd", L"pdf")) {
         ExportPdf();
+        return;
+    }
+
+    if (JsonFieldEquals(msg, L"cmd", L"closeAck")) {
+        bool allow = msg.find(L"\"allow\":true") != std::wstring::npos;
+        if (mParentWin) PostMessageW(mParentWin, WM_BSLVIEW_CLOSE_ACK, allow ? 1 : 0, 0);
         return;
     }
 }

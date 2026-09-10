@@ -15,6 +15,11 @@ struct ICoreWebView2Environment;
 // controller creation does not block.
 #define WM_BSLVIEW_WEBVIEW_FAILED (WM_APP + 17)
 
+// Posted to the host window once the page has answered a RequestClose(): the
+// wParam is nonzero when it is safe to DestroyWindow now (no unsaved edits,
+// or the user chose to discard/save them), zero when the user cancelled.
+#define WM_BSLVIEW_CLOSE_ACK (WM_APP + 18)
+
 // Hostname the viewer is served from. Using a virtual host rather than file://
 // keeps the document URL stable, which is what lets Chromium reuse its HTTP and
 // V8 code caches across openings, and keeps the Monaco workers same-origin.
@@ -72,6 +77,13 @@ public:
 
     void Find(const std::wstring& text, bool matchCase, bool wholeWords, bool backwards, bool first);
     void SendCommand(const wchar_t* cmd);
+
+    // Asks the page whether it is safe to close (it may put up its own
+    // unsaved-changes prompt); the answer arrives asynchronously as
+    // WM_BSLVIEW_CLOSE_ACK to mParentWin. Returns false when the page cannot
+    // be asked yet, in which case the caller should close immediately instead
+    // of waiting for an ack that will never come.
+    bool RequestClose();
 
     HWND         mParentWin;
     std::wstring mFilePath;

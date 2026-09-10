@@ -313,3 +313,27 @@ std::wstring LoadObjectMetaForForm(const wchar_t* formPath, DWORD maxBytes)
         return std::wstring();
     return file.text;
 }
+
+std::wstring FindFormLayoutForMeta(const wchar_t* metaPath)
+{
+    if (!metaPath || !*metaPath) return std::wstring();
+
+    std::wstring path = metaPath;
+    while (!path.empty() && (path.back() == L'\\' || path.back() == L'/'))
+        path.pop_back();
+    if (path.empty()) return std::wstring();
+
+    std::wstring base = PathBaseName(path);
+    size_t dot = base.find_last_of(L'.');
+    if (dot == std::wstring::npos || dot == 0) return std::wstring();
+    if (!NameEqualsI(base.substr(dot), L".xml")) return std::wstring();
+    std::wstring name = base.substr(0, dot);
+    if (name.empty()) return std::wstring();
+
+    std::wstring dir = PathDirName(path);
+    if (dir.empty() || !NameEqualsI(PathBaseName(dir), L"Forms")) return std::wstring();
+
+    wchar_t sep = PathSep(path);
+    std::wstring layout = dir + sep + name + sep + L"Ext" + sep + L"Form.xml";
+    return FileExistsW(layout.c_str()) ? layout : std::wstring();
+}

@@ -47,6 +47,7 @@ var allItems = [];
 var baselineContent = '';
 var suppressDirty = false;
 var pendingLeaveEdit = false;
+var pendingClose = false;
 
 function readStoredBool(key, fallback) {
     try {
@@ -165,6 +166,13 @@ function isFormView() { var p = currentProvider(); return !!(p && p.id === 'form
 /* True whenever a provider owns the view, i.e. the editor is replaced rather
  * than split with the preview iframe. */
 function isDocPreview() { return !!currentProvider(); }
+
+/* A managed form or spreadsheet preview is a read-only representation.  The
+ * standalone editor may still be in its global editing session underneath,
+ * but saving is allowed only after the user switches back to the XML/source. */
+function sourceEditingActive() {
+    return !!(state.isEditing && !(state.previewMode && isDocPreview()));
+}
 
 /* True when the outline is a collapsible tree rather than a flat list. */
 function docTree() { var p = currentProvider(); return !!(p && p.tree); }
@@ -315,6 +323,7 @@ function onHostMessage(ev) {
         case 'saved':   onSaveResult(d.ok); break;
         case 'reverted': onReverted(d); break;
         case 'pdfDone': clearPrintContent(); break;
+        case 'confirmClose': requestClose(); break;
     }
 }
 
@@ -737,8 +746,12 @@ function findLocalDefinition(m, pos) {
     var word = m.getWordAtPosition(pos);
     if (!word || !word.word) return null;
     var name = word.word;
+    /* \b is ASCII-only in JS regex: between a Cyrillic letter and "(" neither
+     * side counts as \w, so no boundary is ever found and every Cyrillic
+     * procedure name (i.e. almost all of them) silently fails to match.
+     * Use an explicit negative lookahead over the real identifier charset. */
     var re = new RegExp('^\\s*(?:Асинх\\s+|Async\\s+)?(Процедура|Procedure|Функция|Function)\\s+' +
-        name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+        name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![a-zA-Z\\u0410-\\u044F_\\u0401\\u04510-9])', 'i');
     var lines = m.getLinesContent();
     for (var i = 0; i < lines.length; i++) {
         if (!re.test(lines[i])) continue;
@@ -1079,22 +1092,6 @@ function wireEditorCommands() {
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash],
         run: function () { toggleLineComment(); }
     });
-    editor.addAction({
-        id: 'bsl.gotoDefinition',
-        label: 'Перейти к определению',
-        keybindings: [monaco.KeyCode.F12],
-        run: function () {
-            if (!isBslModule() || !model) return;
-            var loc = findLocalDefinition(model, editor.getPosition());
-            if (!loc) return;
-            editor.revealRangeInCenter(loc.range);
-            editor.setPosition({
-                lineNumber: loc.range.startLineNumber,
-                column: loc.range.startColumn
-            });
-            editor.focus();
-        }
-    });
 }
 
 /* Monaco's _applyLayout sets .lines-content to 16777216×16777216. That square
@@ -1371,7 +1368,7 @@ function applyChrome() {
     setIcon('btn-edit', state.isEditing ? 'eye' : 'pencil');
     btnEdit.title = state.isEditing ? 'Режим просмотра (Ctrl+E)' : 'Редактировать (Ctrl+E)';
     btnEdit.classList.toggle('active', state.isEditing);
-    btnSave.style.display = state.isEditing ? '' : 'none';
+    btnSave.style.display = sourceEditingActive() ? '' : 'none';
     document.getElementById('btn-format').style.display = (state.isEditing && isBslModule()) ? '' : 'none';
     document.getElementById('btn-comment').style.display = (state.isEditing && isCode) ? '' : 'none';
 
@@ -1463,7 +1460,7 @@ function savePromptOpen() {
 }
 
 function toggleEdit() {
-    if (pendingLeaveEdit || savePromptOpen()) return;
+    if (pendingLeaveEdit || pendingClose || savePromptOpen()) return;
     if (state.isEditing) {
         flushPreviewEdits();
         if (state.dirty) {
@@ -1473,6 +1470,25 @@ function toggleEdit() {
         setEditing(false);
     } else {
         setEditing(true);
+    }
+}
+
+/* Host asks (on window close) whether it is safe to shut down. Unsaved edits
+ * get the same save-prompt as leaving edit mode; otherwise ack right away. */
+function requestClose() {
+    if (savePromptOpen()) {
+        // A prompt is already up for another reason (e.g. leaving edit mode);
+        // piggyback the close on whatever the user decides there instead of
+        // dropping this request on the floor.
+        pendingClose = true;
+        return;
+    }
+    flushPreviewEdits();
+    if (state.dirty) {
+        pendingClose = true;
+        showSavePrompt();
+    } else {
+        send({ cmd: 'closeAck', allow: true });
     }
 }
 
@@ -1491,18 +1507,28 @@ function toggleLineComment() {
 
 function onSavePromptYes() {
     hideSavePrompt();
-    pendingLeaveEdit = true;
+    if (!pendingClose) pendingLeaveEdit = true;
     saveFile();
 }
 
 function onSavePromptNo() {
     hideSavePrompt();
-    revertUnsaved();
+    pendingLeaveEdit = false;
+    if (pendingClose) {
+        pendingClose = false;
+        send({ cmd: 'closeAck', allow: true });
+    } else {
+        revertUnsaved();
+    }
 }
 
 function onSavePromptCancel() {
     hideSavePrompt();
     pendingLeaveEdit = false;
+    if (pendingClose) {
+        pendingClose = false;
+        send({ cmd: 'closeAck', allow: false });
+    }
     if (editor) editor.focus();
 }
 
@@ -1523,8 +1549,15 @@ function onSaveResult(ok) {
             pendingLeaveEdit = false;
             setEditing(false);
         }
+        if (pendingClose) {
+            pendingClose = false;
+            send({ cmd: 'closeAck', allow: true });
+        }
     } else {
+        // Save failed: keep the window open so the error stays visible and
+        // the user can retry instead of losing the edit on a forced close.
         pendingLeaveEdit = false;
+        pendingClose = false;
     }
     setTimeout(function () {
         btnSave.classList.remove('save-ok', 'save-err');
@@ -1534,7 +1567,7 @@ function onSaveResult(ok) {
 }
 
 function saveFile() {
-    if (!state.isEditing || !model) return;
+    if (!sourceEditingActive() || !model) return;
     flushPreviewEdits();
     send({ cmd: 'save', content: model.getValue() });
 }
@@ -1811,6 +1844,8 @@ function highlightFormOutline(id) {
 function hideFormPreview() {
     var host = formPreviewEl();
     if (!host) return;
+    var view = previewView();
+    if (view && view.dismiss) view.dismiss(host);
     host.style.display = 'none';
     host.hidden = true;
     host.innerHTML = '';
@@ -2597,12 +2632,14 @@ function printCss() {
          + '.tp-left-body{display:flex}'
          + '.tp-right{flex:0 0 auto}'
          + '.tp-areas{width:92px;flex:0 0 92px;background:#f3f3f3;border-right:1px solid #c8c8c8;font:11px Segoe UI,sans-serif}'
-         + '.tp-area-label{border-top:1px solid #e14c4c;padding:2px 4px;overflow:hidden}'
+         + '.tp-area-label{border-top:1px solid #e14c4c;border-bottom:1px solid #e14c4c;padding:2px 4px;overflow:hidden}'
          + '.tp-rowhead{width:32px;flex:0 0 32px;background:#ececec;text-align:center;font:10px Segoe UI,sans-serif}'
          + '.tp-grid{border-collapse:collapse;table-layout:fixed;font-family:Arial,sans-serif}'
          + '.tp-grid td,.tp-grid th{border:1px solid #ccc;padding:0 2px;vertical-align:top}'
          + '.tp-grid th{background:#ececec;font:10px Segoe UI,sans-serif}'
          + '.tp-param{color:#7a2e00}'
+         + '.tp-row-area-lines{position:relative}'
+         + '.tp-row-area-line{border-top:1px solid #e14c4c}'
          + '.tp-drawings{position:relative}'
          + '.tp-drawing{position:absolute}';
 }
@@ -2818,6 +2855,7 @@ window.ViewerInternals = {
     currentProvider: currentProvider,
     previewView: previewView,
     isDocPreview: isDocPreview,
+    sourceEditingActive: sourceEditingActive,
     isFormView: isFormView,
     docTree: docTree,
     formPreviewOpen: formPreviewOpen,

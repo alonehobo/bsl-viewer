@@ -31,6 +31,13 @@ if not exist "%SRC%\web\vs\loader.js" (
 
 for %%D in (obj32 obj64 objexe) do if not exist "%SRC%\%%D" mkdir "%SRC%\%%D"
 
+cd /d "%SRC%"
+"%WINSDK%\bin\%SDKVER%\x64\rc.exe" /nologo /fo "%SRC%\objexe\app.res" "%SRC%\app.rc"
+if errorlevel 1 (
+    echo FAILED: app icon resource
+    exit /b 1
+)
+
 set FAILED=0
 
 echo ========================================
@@ -63,7 +70,7 @@ echo ========================================
 cd /d "%SRC%\objexe"
 cl.exe %CFLAGS% "%SRC%\bsledit.cpp" "%SRC%\bslcommon.cpp" "%SRC%\webview2host.cpp" ^
   /Fe:"%SRC%\BSLEdit.exe" ^
-  /link %LIBS% "%WV2SDK%\x64\WebView2LoaderStatic.lib" /SUBSYSTEM:WINDOWS
+  /link "%SRC%\objexe\app.res" %LIBS% "%WV2SDK%\x64\WebView2LoaderStatic.lib" /SUBSYSTEM:WINDOWS
 if errorlevel 1 (set FAILED=1& echo FAILED: BSLEdit.exe build) else (echo SUCCESS: BSLEdit.exe)
 
 cd /d "%SRC%"

@@ -54,4 +54,12 @@ ObjectMetaPaths ObjectMetaCandidates(const wchar_t* formPath);
 std::wstring FindObjectMetaFile(const wchar_t* formPath);
 std::wstring LoadObjectMetaForForm(const wchar_t* formPath, DWORD maxBytes);
 
+// The reverse direction: a form's own descriptor sits right in Forms/,
+// next to the folder holding its rendered layout:
+//   Forms/<FormName>.xml            (descriptor - what gets opened)
+//   Forms/<FormName>/Ext/Form.xml   (the actual managed-form layout)
+// Given the descriptor path, returns the layout path if it exists on disk,
+// or an empty string when there is nothing to redirect to.
+std::wstring FindFormLayoutForMeta(const wchar_t* metaPath);
+
 #endif // BSLCOMMON_H

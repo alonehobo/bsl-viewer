@@ -63,6 +63,35 @@ function formatByIndex(formats, idx) {
     return formats[n - 1] || null;
 }
 
+/* Properties a cell must never inherit: width belongs to the column, height to
+ * the row, and being a parameter is a trait of the cell itself — a row whose
+ * format says `Parameter` would otherwise turn every cell in it into one. */
+var ROW_ONLY_PROPS = { width: true, height: true, fillType: true };
+
+/* A cell format sits on top of its row format: 1C resolves the two, and MXL
+ * leans on it — a row can carry the font and colours of cells that have no
+ * format of their own. */
+function effectiveFormat(model, row, cell) {
+    var cellFmt = formatByIndex(model.formats, cell && cell.formatIndex);
+    var rowFmt = formatByIndex(model.formats, row && row.formatIndex);
+    if (!rowFmt) return cellFmt;
+    var out = {};
+    var k;
+    for (k in rowFmt) {
+        if (!Object.prototype.hasOwnProperty.call(rowFmt, k)) continue;
+        if (ROW_ONLY_PROPS[k]) continue;
+        if (rowFmt[k] == null || rowFmt[k] === '') continue;
+        out[k] = rowFmt[k];
+    }
+    if (!cellFmt) return out;
+    for (k in cellFmt) {
+        if (!Object.prototype.hasOwnProperty.call(cellFmt, k)) continue;
+        if (cellFmt[k] == null || cellFmt[k] === '') continue;
+        out[k] = cellFmt[k];
+    }
+    return out;
+}
+
 function widthOfFormat(fmt) {
     if (!fmt || fmt.width == null || fmt.width === '') return widthToPx(DEFAULT_WIDTH_U);
     var n = Number(fmt.width);
@@ -353,6 +382,9 @@ function displayText(cell, fmt) {
     if (fill === 'Parameter' || (!fill && cell.parameter && !cell.text)) {
         return cell.parameter ? ('<' + cell.parameter + '>') : '';
     }
+    if (fill === 'Template' && cell.text) {
+        return String(cell.text).replace(/\[([^\]\r\n]+)\]/g, '<$1>');
+    }
     if (cell.text) return cell.text;
     if (cell.parameter) return '<' + cell.parameter + '>';
     return '';
@@ -380,7 +412,7 @@ function lineOf(model, idx) {
     return model.lines[n] || null;
 }
 
-function borderCss(line) {
+function borderCss(line, color) {
     if (!line) return '';
     var st = String(line.style || 'Solid').toLowerCase();
     if (st === 'none' || st === 'нет') return '';
@@ -390,7 +422,7 @@ function borderCss(line) {
     else if (st.indexOf('dash') >= 0 || st.indexOf('пунктир') >= 0) kind = 'dashed';
     else if (st.indexOf('double') >= 0 || st.indexOf('двойн') >= 0) kind = 'double';
     if (line.gap && kind === 'solid') kind = 'dashed';
-    return w + 'px ' + kind + ' #000';
+    return w + 'px ' + kind + ' ' + (styleColor(color) || '#000');
 }
 
 function borderRank(css) {
@@ -410,20 +442,20 @@ function spanBorders(model, rowIdx, colIdx, rowspan, colspan) {
     var y, x;
     rowspan = rowspan || 1;
     colspan = colspan || 1;
-    function add(cell, left, right, top, bottom) {
+    function add(cell, cellRow, left, right, top, bottom) {
         if (!cell) return;
-        var fmt = formatByIndex(model.formats, cell.formatIndex);
+        var fmt = effectiveFormat(model, cellRow, cell);
         if (!fmt) return;
         if (left) out.left = strongerBorder(out.left, sideBorder(model, fmt, 'left'));
         if (right) out.right = strongerBorder(out.right, sideBorder(model, fmt, 'right'));
         if (top) out.top = strongerBorder(out.top, sideBorder(model, fmt, 'top'));
         if (bottom) out.bottom = strongerBorder(out.bottom, sideBorder(model, fmt, 'bottom'));
     }
-    add(cellAt(model.rows[rowIdx], colIdx), true, true, true, true);
+    add(cellAt(model.rows[rowIdx], colIdx), model.rows[rowIdx], true, true, true, true);
     for (y = 0; y < rowspan; y++) {
         var row = model.rows[rowIdx + y];
         for (x = 0; x < colspan; x++) {
-            add(cellAt(row, colIdx + x), x === 0, x === colspan - 1, y === 0, y === rowspan - 1);
+            add(cellAt(row, colIdx + x), row, x === 0, x === colspan - 1, y === 0, y === rowspan - 1);
         }
     }
     return out;
@@ -435,6 +467,32 @@ function colSpanWidth(set, col, colspan) {
     var i;
     for (i = 0; i < n; i++) w += set.widths[col + i] || 0;
     return w;
+}
+
+/* Auto placement lets a value run over its neighbours, but only while they are
+ * empty: 1C stops the text at the first filled cell instead of drawing it
+ * underneath. The direction follows the alignment, as in the reference
+ * renderer; a centred value grows symmetrically so it stays over its own cell. */
+function spillBox(model, row, set, spans, ly, col, colspan, align) {
+    var cellW = colSpanWidth(set, col, colspan);
+    function free(c) {
+        if (c < 0 || c >= set.size) return false;
+        if (spans.covered[ly][c] || spans.origin[ly][c]) return false;
+        var neighbour = cellAt(row, c);
+        if (!neighbour) return true;
+        return !displayText(neighbour, effectiveFormat(model, row, neighbour));
+    }
+    var rightPx = 0;
+    var leftPx = 0;
+    var c;
+    for (c = col + colspan; free(c); c++) rightPx += set.widths[c] || 0;
+    for (c = col - 1; free(c); c--) leftPx += set.widths[c] || 0;
+    if (align === 'right') return { left: leftPx ? -leftPx : 0, width: cellW + leftPx };
+    if (align === 'center') {
+        var sym = Math.min(leftPx, rightPx);
+        return { left: sym ? -sym : 0, width: cellW + 2 * sym };
+    }
+    return { left: 0, width: cellW + rightPx };
 }
 
 function lockWidth(el, px) {
@@ -450,7 +508,7 @@ function sideBorder(model, fmt, side) {
     var key = side + 'Border';
     var idx = fmt[key];
     if (idx == null || idx === '') idx = fmt.border;
-    return borderCss(lineOf(model, idx));
+    return borderCss(lineOf(model, idx), fmt.bordersColor);
 }
 
 function styleColor(v) {
@@ -462,17 +520,27 @@ function styleColor(v) {
     return '';
 }
 
-function alignCss(v, axis) {
+function alignCss(v, axis, fallback) {
     var s = String(v || '').toLowerCase();
     if (axis === 'h') {
         if (s === 'center' || s.indexOf('центр') >= 0) return 'center';
         if (s === 'right' || s.indexOf('прав') >= 0) return 'right';
         if (s === 'justify' || s.indexOf('ширин') >= 0) return 'justify';
-        return 'left';
+        if (s) return 'left';
+        return fallback || 'left';
     }
     if (s === 'center' || s.indexOf('центр') >= 0) return 'middle';
     if (s === 'bottom' || s.indexOf('низ') >= 0) return 'bottom';
-    return 'top';
+    if (s) return 'top';
+    return fallback || 'top';
+}
+
+/* Template.xml writes the vertical alignment of every cell out; MXL leaves the
+ * bit clear and relies on the platform default, which is the bottom edge. The
+ * model says which default applies so the renderer stays format-agnostic. */
+function defaultVAlign(model) {
+    var d = model && model.defaults;
+    return alignCss(d && d.verticalAlignment, 'v', 'top');
 }
 
 function rowHeight(model, row) {
@@ -613,7 +681,8 @@ function colAreaBounds(it, size) {
 function placementOf(fmt) {
     var p = String((fmt && fmt.textPlacement) || 'Auto').toLowerCase();
     if (p === 'wrap' || p === 'перенос' || p.indexOf('wrap') >= 0) return 'wrap';
-    if (p === 'cut' || p === 'обрез' || p === 'block' || p.indexOf('cut') >= 0) return 'cut';
+    if (p === 'block' || p.indexOf('забив') >= 0) return 'block';
+    if (p === 'cut' || p === 'обрез' || p.indexOf('cut') >= 0) return 'cut';
     return 'auto';
 }
 
@@ -647,6 +716,24 @@ function rowAreaStarts(model) {
         starts[it.beginRow] = it;
     }
     return starts;
+}
+
+function eachRowArea(model, fn) {
+    var items = model.namedItems || [];
+    var used = {};
+    var last = model.height - 1;
+    var i;
+    for (i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (!isRowArea(it)) continue;
+        if (it.type && it.type !== 'Rows') continue;
+        if (!it.name || used[it.name]) continue;
+        used[it.name] = true;
+        var b = Math.max(0, it.beginRow);
+        var e = Math.min(last, it.endRow);
+        if (e < b) continue;
+        fn(it, b, e);
+    }
 }
 
 function itemKey(it) {
@@ -704,6 +791,112 @@ function outline(model, xml) {
     return out;
 }
 
+/* 8x8 fill patterns 1..17 of the spreadsheet format, as in the reference
+ * renderer: bit x of row y is a pixel of the pattern colour. Pattern 0 is a
+ * solid fill and 255 means no pattern at all. */
+var PATTERN_TILES = [
+    [0xAA, 0xFF, 0x55, 0xFF, 0xAA, 0xFF, 0x55, 0xFF],
+    [0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55],
+    [0x00, 0x55, 0x00, 0xAA, 0x00, 0x55, 0x00, 0xAA],
+    [0xFF, 0x01, 0x01, 0x01, 0xFF, 0x10, 0x10, 0x10],
+    [0x11, 0x2A, 0x44, 0xA2, 0x11, 0xA8, 0x44, 0x8A],
+    [0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66],
+    [0x00, 0xFF, 0xFF, 0x00, 0x00, 0xFF, 0xFF, 0x00],
+    [0x99, 0xCC, 0x66, 0x33, 0x99, 0xCC, 0x66, 0x33],
+    [0xCC, 0x99, 0x33, 0x66, 0xCC, 0x99, 0x33, 0x66],
+    [0xCC, 0xCC, 0x33, 0x33, 0xCC, 0xCC, 0x33, 0x33],
+    [0xDD, 0xDD, 0x77, 0x77, 0xDD, 0xDD, 0x77, 0x77],
+    [0xE1, 0xF0, 0x78, 0x3C, 0x1E, 0x0F, 0x87, 0xC3],
+    [0x87, 0x0F, 0x1E, 0x3C, 0x78, 0xF0, 0xE1, 0xC3],
+    [0x88, 0x44, 0x22, 0x11, 0x88, 0x44, 0x22, 0x11],
+    [0x44, 0x88, 0x11, 0x22, 0x44, 0x88, 0x11, 0x22],
+    [0x44, 0xFF, 0x44, 0x44, 0x44, 0xFF, 0x44, 0x44],
+    [0xC0, 0xC0, 0x33, 0x33, 0x0C, 0x0C, 0x33, 0x33]
+];
+
+var PATTERN_SOLID = 0;
+var PATTERN_NONE = 255;
+var patternUrlCache = {};
+
+function patternTileUrl(tile, color) {
+    var key = tile.join(',') + '|' + color;
+    if (patternUrlCache[key]) return patternUrlCache[key];
+    var rects = '';
+    var y, x;
+    for (y = 0; y < 8; y++) {
+        for (x = 0; x < 8; x++) {
+            if ((tile[y] >> x) & 1) rects += '<rect x="' + x + '" y="' + y + '" width="1" height="1"/>';
+        }
+    }
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" '
+        + 'shape-rendering="crispEdges" fill="' + color + '">' + rects + '</svg>';
+    var url = 'url("data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg) + '")';
+    patternUrlCache[key] = url;
+    return url;
+}
+
+/* Returns the background layers of a cell: a colour and, over it, the hatch of
+ * the pattern. A pattern without an absolute colour is not drawn — real
+ * invoices mark a column with a colourless pattern, and painting it black is
+ * wrong. */
+function patternFill(fmt) {
+    if (!fmt || fmt.pattern == null || fmt.pattern === '') return null;
+    var color = styleColor(fmt.patternColor);
+    if (!color) return null;
+    var n = parseInt(fmt.pattern, 10);
+    if (!isFinite(n) || n === PATTERN_NONE) return null;
+    if (n === PATTERN_SOLID) return { color: color };
+    if (n < 1 || n > PATTERN_TILES.length) return null;
+    return { image: patternTileUrl(PATTERN_TILES[n - 1], color) };
+}
+
+/* Text orientation is stored in degrees. 90 is the common case — text reading
+ * bottom to top — and gets writing-mode so the line box keeps its height; any
+ * other angle is a plain rotation. */
+function applyOrientation(node, fmt) {
+    if (!fmt || fmt.textOrientation == null || fmt.textOrientation === '') return false;
+    var deg = Number(fmt.textOrientation);
+    if (!isFinite(deg) || !deg) return false;
+    if (deg === 90) {
+        node.style.writingMode = 'vertical-rl';
+        node.style.transform = 'rotate(180deg)';
+        return true;
+    }
+    node.style.display = 'inline-block';
+    node.style.transformOrigin = 'left bottom';
+    node.style.transform = 'rotate(' + (-deg) + 'deg)';
+    return true;
+}
+
+/* «Забивать»: 1C repeats the value until it covers the cell. CSS cannot do it,
+ * so the line is multiplied in the DOM and the overflow is clipped. The
+ * reference measures the glyphs; an estimate from the font size with a margin
+ * is enough, because everything past the edge is cut off anyway. */
+var BLOCK_MAX_REPEATS = 200;
+var BLOCK_MAX_CHARS = 32768;
+
+function blockRepeat(text, widthPx, fontPt) {
+    if (!text) return String(text || '');
+    var charPx = Math.max(3, (Number(fontPt) || 8) * (96 / 72) * 0.55);
+    var lines = String(text).split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var lineW = line.length * charPx;
+        /* A line that already overruns the cell is simply clipped: there is
+         * nothing left to fill. */
+        if (!line.length || lineW >= widthPx) continue;
+        var reps = Math.ceil((widthPx * 1.2) / lineW) + 1;
+        if (reps > BLOCK_MAX_REPEATS) reps = BLOCK_MAX_REPEATS;
+        if (reps * line.length > BLOCK_MAX_CHARS) {
+            reps = Math.max(1, Math.floor(BLOCK_MAX_CHARS / line.length));
+        }
+        var out = line;
+        for (var k = 1; k < reps; k++) out += line;
+        lines[i] = out;
+    }
+    return lines.join('\n');
+}
+
 function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -723,9 +916,11 @@ function applyCellStyle(td, model, cell, fmt, hPx, auto, place, borders) {
     if (dec) td.style.textDecoration = dec.trim();
     place = place || placementOf(fmt);
     td.style.textAlign = alignCss(fmt && fmt.horizontalAlignment, 'h');
-    td.style.verticalAlign = alignCss(fmt && fmt.verticalAlignment, 'v');
-    if (place === 'cut') {
-        td.style.whiteSpace = 'nowrap';
+    td.style.verticalAlign = alignCss(fmt && fmt.verticalAlignment, 'v', defaultVAlign(model));
+    if (place === 'cut' || place === 'block') {
+        /* `pre` rather than `nowrap`: 1C draws the value line by line and only
+         * refuses to wrap. The overflow is clipped either way. */
+        td.style.whiteSpace = 'pre';
         td.style.overflow = 'hidden';
     } else if (place === 'wrap') {
         td.style.whiteSpace = 'pre-wrap';
@@ -738,6 +933,9 @@ function applyCellStyle(td, model, cell, fmt, hPx, auto, place, borders) {
     if (fmt) {
         var bg = styleColor(fmt.backColor);
         if (bg) td.style.background = bg;
+        var pat = patternFill(fmt);
+        if (pat && pat.color) td.style.background = pat.color;
+        else if (pat && pat.image) td.style.backgroundImage = pat.image;
         var fg = styleColor(fmt.textColor);
         if (fg) td.style.color = fg;
     }
@@ -807,7 +1005,7 @@ function renderGroupTable(model, group, ctx, rowHeights) {
             }
             lockWidth(td, colSpanWidth(set, c, spanCols));
             var cell = cellAt(row, c);
-            var fmt = formatByIndex(model.formats, cell && cell.formatIndex);
+            var fmt = effectiveFormat(model, row, cell);
             var place = placementOf(fmt);
             var text = displayText(cell, fmt);
             var cellPx = spanRows === 1 ? rh : cellH;
@@ -820,15 +1018,38 @@ function renderGroupTable(model, group, ctx, rowHeights) {
             if (text) td.className = (td.className ? td.className + ' ' : '') + 'tp-has-text';
             var inner = el('div', 'tp-cell tp-place-' + place);
             inner.style.height = cellPx + 'px';
+            /* The inner box fills the cell, so `vertical-align` on the td can
+             * never move the text: the alignment has to live here. */
+            var va = alignCss(fmt && fmt.verticalAlignment, 'v', defaultVAlign(model));
+            inner.style.display = 'flex';
+            inner.style.flexDirection = 'column';
+            inner.style.justifyContent =
+                va === 'bottom' ? 'flex-end' : va === 'middle' ? 'center' : 'flex-start';
             if (place === 'auto') {
                 inner.style.overflow = 'visible';
                 inner.style.whiteSpace = 'nowrap';
             } else {
                 inner.style.overflow = 'hidden';
             }
+            if (text && place === 'auto' && spanCols === 1 && spanRows === 1) {
+                var box = spillBox(model, row, set, spans, ly, c,
+                    spanCols, alignCss(fmt && fmt.horizontalAlignment, 'h'));
+                lockWidth(inner, box.width);
+                if (box.left) inner.style.marginLeft = box.left + 'px';
+                inner.style.overflow = 'hidden';
+            }
             if (text) {
-                if (isParamCell(cell, fmt)) inner.appendChild(el('span', 'tp-param', text));
-                else inner.textContent = text;
+                var shown = place === 'block'
+                    ? blockRepeat(text, colSpanWidth(set, c, spanCols), fontOf(model, fmt).height)
+                    : text;
+                var node = inner;
+                if (isParamCell(cell, fmt) || (fmt && fmt.fillType === 'Template')) {
+                    node = el('span', 'tp-param', shown);
+                    inner.appendChild(node);
+                } else {
+                    inner.textContent = shown;
+                }
+                if (applyOrientation(inner, fmt)) inner.style.display = 'block';
             }
             td.appendChild(inner);
             td.addEventListener('click', (function (rowIdx, colIdx, cellRef) {
@@ -886,6 +1107,10 @@ function renderDrawings(model, wrap, rowTops, rowHeights) {
     drawings = drawings.slice().sort(function (a, b) { return (a.zOrder || 0) - (b.zOrder || 0); });
     for (var i = 0; i < drawings.length; i++) {
         var d = drawings[i];
+        /* Charts, OLE objects and the like carry no geometry we can honour;
+         * drawing an empty frame in their place is worse than leaving the
+         * sheet alone, so they are skipped, as in the reference renderer. */
+        if (d.drawingType === 'Other') continue;
         var row = model.rows[d.beginRow] || model.rows[0];
         var set = columnSetOf(model, row && row.columnsID);
         var lefts = colLefts(set);
@@ -893,17 +1118,49 @@ function renderDrawings(model, wrap, rowTops, rowHeights) {
         var x1 = (lefts[d.endColumn] || 0) + widthToPx(d.endColumnOffset);
         var y0 = (rowTops[d.beginRow] || 0) + heightToPx(d.beginRowOffset);
         var y1 = (rowTops[d.endRow] || 0) + heightToPx(d.endRowOffset);
-        var w = Math.max(4, x1 - x0);
-        var h = Math.max(4, y1 - y0);
+        var w = x1 - x0;
+        var h = y1 - y0;
+        /* Degenerate geometry: 1C does not always write cell anchors for a
+         * caption or a rectangle, and a zero-sized box would be an invisible
+         * dot. The reference renderer falls back to the natural size of the
+         * content, so the object at least reads. */
+        if (w < 8 || h < 8) {
+            var lines = String(d.text || '').split(/\r?\n/);
+            var widest = 0;
+            for (var li = 0; li < lines.length; li++) {
+                if (lines[li].length > widest) widest = lines[li].length;
+            }
+            var fontPt = fontOf(model, formatByIndex(model.formats, d.formatIndex)).height || 8;
+            var chPx = fontPt * (96 / 72) * 0.55;
+            if (w < 8) w = Math.max(60, widest * chPx + 8);
+            if (h < 8) h = Math.max(20, lines.length * fontPt * (96 / 72) * 1.2 + 6);
+        }
+        w = Math.max(4, w);
+        h = Math.max(4, h);
         var box = el('div', 'tp-drawing');
         box.style.left = x0 + 'px';
         box.style.top = y0 + 'px';
         box.style.width = w + 'px';
         box.style.height = h + 'px';
         var fmt = formatByIndex(model.formats, d.formatIndex);
-        var b = fmt ? borderCss(lineOf(model, fmt.drawingBorder)) : '';
+        var b = fmt ? borderCss(lineOf(model, fmt.drawingBorder), fmt.bordersColor) : '';
+        /* A caption or a rectangle is nothing but its frame and its text: when
+         * the format names no line, 1C still draws a thin one. */
+        if (!b && (d.drawingType === 'Text' || d.drawingType === 'Rectangle')) {
+            b = '1px solid ' + (styleColor(fmt && fmt.bordersColor) || '#000');
+        }
         if (b && b !== 'none') box.style.border = b;
-        var url = pictureDataUrl(model, d.pictureIndex);
+        if (fmt) {
+            var dbg = styleColor(fmt.backColor);
+            if (dbg) box.style.background = dbg;
+            var dpat = patternFill(fmt);
+            if (dpat && dpat.color) box.style.background = dpat.color;
+            else if (dpat && dpat.image) box.style.backgroundImage = dpat.image;
+        }
+        /* A drawing that is not a picture carries pictureIndex 0, which means
+         * «no picture» — resolving it would hand a caption the first image of
+         * the document. */
+        var url = d.pictureIndex ? pictureDataUrl(model, d.pictureIndex) : '';
         if (url) {
             var img = document.createElement('img');
             img.src = url;
@@ -912,6 +1169,16 @@ function renderDrawings(model, wrap, rowTops, rowHeights) {
             img.style.width = '100%';
             img.style.height = '100%';
             box.appendChild(img);
+        } else if (d.text) {
+            var cap = el('div', 'tp-drawing-text', d.text);
+            var dfont = fontOf(model, fmt);
+            cap.style.fontFamily = (dfont.faceName || 'Arial') + ', Arial, sans-serif';
+            cap.style.fontSize = (dfont.height || 8) + 'pt';
+            cap.style.fontWeight = dfont.bold ? 'bold' : 'normal';
+            cap.style.fontStyle = dfont.italic ? 'italic' : 'normal';
+            var dfg = styleColor(fmt && fmt.textColor);
+            if (dfg) cap.style.color = dfg;
+            box.appendChild(cap);
         }
         layer.appendChild(box);
     }
@@ -962,6 +1229,7 @@ function syncChrome(container) {
             labels[i].style.height = Math.max(12, (rowTops[e] || 0) + (rowHeights[e] || 0) - (rowTops[b] || 0)) + 'px';
         }
     }
+    syncRowAreaLines(container, rowTops, rowHeights, last);
     container._tpRowTops = rowTops;
     container._tpRowHeights = rowHeights;
 }
@@ -1074,17 +1342,7 @@ function renderAreaRail(model, rowHeights, rowTops, totalH) {
     var rail = el('div', 'tp-areas');
     rail.style.height = totalH + 'px';
     rail.style.position = 'relative';
-    var items = model.namedItems || [];
-    var used = {};
-    for (var i = 0; i < items.length; i++) {
-        var it = items[i];
-        if (!isRowArea(it)) continue;
-        if (it.type && it.type !== 'Rows') continue;
-        if (!it.name || used[it.name]) continue;
-        used[it.name] = true;
-        var b = Math.max(0, it.beginRow);
-        var e = Math.min(model.height - 1, it.endRow);
-        if (e < b) continue;
+    eachRowArea(model, function (it, b, e) {
         var top = rowTops[b] || 0;
         var bottom = (rowTops[e] || 0) + (rowHeights[e] || 0);
         var lab = el('div', 'tp-area-label', it.name);
@@ -1096,8 +1354,39 @@ function renderAreaRail(model, rowHeights, rowTops, totalH) {
         lab.setAttribute('data-id', it.name);
         lab.title = it.name;
         rail.appendChild(lab);
-    }
+    });
     return rail;
+}
+
+function addRowAreaLine(layer, y, row, edge) {
+    var ln = el('div', 'tp-row-area-line');
+    ln.style.top = y + 'px';
+    ln.setAttribute('data-row', String(row));
+    ln.setAttribute('data-edge', edge);
+    layer.appendChild(ln);
+}
+
+function renderRowAreaLines(model, rowTops, rowHeights) {
+    var layer = el('div', 'tp-row-area-lines');
+    eachRowArea(model, function (it, b, e) {
+        addRowAreaLine(layer, rowTops[b] || 0, b, 'start');
+        addRowAreaLine(layer, (rowTops[e] || 0) + (rowHeights[e] || 0), e, 'end');
+    });
+    return layer.children.length ? layer : null;
+}
+
+function syncRowAreaLines(container, rowTops, rowHeights, last) {
+    var lines = container.querySelectorAll('.tp-row-area-line');
+    if (!lines.length) return;
+    var i;
+    for (i = 0; i < lines.length; i++) {
+        var row = parseInt(lines[i].getAttribute('data-row'), 10);
+        if (!isFinite(row) || row < 0) continue;
+        if (row > last) row = last;
+        var y = rowTops[row] || 0;
+        if (lines[i].getAttribute('data-edge') === 'end') y += rowHeights[row] || 0;
+        lines[i].style.top = y + 'px';
+    }
 }
 
 function renderRowHead(model, rowHeights) {
@@ -1129,7 +1418,7 @@ function syncAreaHighlight(container, id) {
     }
     ov.hidden = false;
     if (isColumnArea(area)) {
-        var set = viewColumnSet(model);
+        var set = viewColumnSet(model, area.columnsID);
         var lefts = colLefts(set);
         var bnds = colAreaBounds(area, set.size);
         if (!bnds) { ov.hidden = true; return; }
@@ -1218,6 +1507,63 @@ function highlight(container, id) {
     return hit;
 }
 
+/* A row-group's own column set (`renderGroupTable`) is already correct — each
+ * group draws with its own widths. The sticky ruler at the top is the part
+ * that used to freeze on the widest set at mount and never follow the scroll:
+ * scrolled into a section with its own (usually narrower, unevenly sized)
+ * columns, the ruler kept showing the wrong widths and any Columns-type named
+ * area belonging to that section never appeared in it. */
+function buildColumnChrome(model, columnsID) {
+    var set = viewColumnSet(model, columnsID);
+    var colAreas = renderColAreaRail(model, set);
+    var colHead = el('div', 'tp-colhead-bar');
+    fillColHead(colHead, set);
+    var chromeH = COLHEAD_H + (colAreas ? (columnAreaLevels(columnAreaItems(model, set.id)).maxLevel + 1) * COL_AREA_ROW_H : 0);
+    return { colAreas: colAreas, colHead: colHead, chromeH: chromeH };
+}
+
+function groupForRowIndex(groups, row) {
+    for (var i = 0; i < groups.length; i++) {
+        if (row >= groups[i].start && row < groups[i].end) return groups[i];
+    }
+    return groups[0] || { columnsID: '' };
+}
+
+function rowAtScrollTop(rowTops, rowHeights, height, scrollTop) {
+    var row = 0;
+    for (var y = 0; y < height; y++) {
+        row = y;
+        if ((rowTops[y] || 0) + (rowHeights[y] || 0) > scrollTop + 1) break;
+    }
+    return row;
+}
+
+/* Re-picks the ruler for whichever row-group now sits at the top of the
+ * viewport, and only touches the DOM when that group actually changed. */
+function updateColumnChrome(container) {
+    var model = container._tpModel;
+    var groups = container._tpGroups;
+    var rowTops = container._tpRowTops;
+    var rowHeights = container._tpRowHeights;
+    var sc = container.querySelector('.tp-scroll');
+    var colChrome = container.querySelector('.tp-col-chrome');
+    var corner = container.querySelector('.tp-corner');
+    if (!model || !groups || !rowTops || !sc || !colChrome || !corner) return;
+    var row = rowAtScrollTop(rowTops, rowHeights, model.height, sc.scrollTop);
+    var columnsID = groupForRowIndex(groups, row).columnsID || '';
+    if (columnsID === container._tpChromeColumnsID) return;
+    container._tpChromeColumnsID = columnsID;
+    var chrome = buildColumnChrome(model, columnsID);
+    colChrome.innerHTML = '';
+    if (chrome.colAreas) colChrome.appendChild(chrome.colAreas);
+    colChrome.appendChild(chrome.colHead);
+    corner.style.height = chrome.chromeH + 'px';
+    corner.style.flexBasis = chrome.chromeH + 'px';
+    if (container._tpOnAreaClick && chrome.colAreas) {
+        chrome.colAreas.addEventListener('click', container._tpOnAreaClick);
+    }
+}
+
 function render(model, container, options) {
     options = options || {};
     container.innerHTML = '';
@@ -1244,16 +1590,13 @@ function render(model, container, options) {
     var left = el('div', 'tp-left');
     var corner = el('div', 'tp-corner');
     var leftBody = el('div', 'tp-left-body');
-    var set = viewColumnSet(model);
+    var chrome0 = buildColumnChrome(model, groupForRowIndex(groups, 0).columnsID || '');
     var colChrome = el('div', 'tp-col-chrome');
-    var colAreas = renderColAreaRail(model, set);
-    var colHead = el('div', 'tp-colhead-bar');
-    fillColHead(colHead, set);
+    var colAreas = chrome0.colAreas;
     if (colAreas) colChrome.appendChild(colAreas);
-    colChrome.appendChild(colHead);
-    var chromeH = COLHEAD_H + (colAreas ? (columnAreaLevels(columnAreaItems(model, set.id)).maxLevel + 1) * COL_AREA_ROW_H : 0);
-    corner.style.height = chromeH + 'px';
-    corner.style.flexBasis = chromeH + 'px';
+    colChrome.appendChild(chrome0.colHead);
+    corner.style.height = chrome0.chromeH + 'px';
+    corner.style.flexBasis = chrome0.chromeH + 'px';
     var rail = renderAreaRail(model, rowHeights, rowTops, acc);
     var nums = renderRowHead(model, rowHeights);
     leftBody.appendChild(rail);
@@ -1270,6 +1613,8 @@ function render(model, container, options) {
     var hi = el('div', 'tp-hi');
     hi.hidden = true;
     gridWrap.appendChild(hi);
+    var rowLines = renderRowAreaLines(model, rowTops, rowHeights);
+    if (rowLines) gridWrap.appendChild(rowLines);
     renderDrawings(model, gridWrap, rowTops, rowHeights);
     right.appendChild(colChrome);
     right.appendChild(gridWrap);
@@ -1282,6 +1627,8 @@ function render(model, container, options) {
     container._tpModel = model;
     container._tpRowTops = rowTops;
     container._tpRowHeights = rowHeights;
+    container._tpGroups = groups;
+    container._tpChromeColumnsID = groupForRowIndex(groups, 0).columnsID || '';
     syncChrome(container);
 
     if (options.onSelect) {
@@ -1290,9 +1637,11 @@ function render(model, container, options) {
             if (!lab) return;
             options.onSelect({ name: lab.getAttribute('data-id'), id: lab.getAttribute('data-id') });
         }
+        container._tpOnAreaClick = onAreaClick;
         rail.addEventListener('click', onAreaClick);
         if (colAreas) colAreas.addEventListener('click', onAreaClick);
     }
+    scroll.addEventListener('scroll', function () { updateColumnChrome(container); });
 }
 
 root.TemplatePreview = {
@@ -1325,7 +1674,16 @@ root.TemplatePreview = {
         columnAreaLevels: columnAreaLevels,
         colAreaBounds: colAreaBounds,
         placementOf: placementOf,
+        effectiveFormat: effectiveFormat,
+        borderCss: borderCss,
+        sideBorder: sideBorder,
+        alignCss: alignCss,
+        defaultVAlign: defaultVAlign,
+        patternFill: patternFill,
+        blockRepeat: blockRepeat,
+        spillBox: spillBox,
         isColumnArea: isColumnArea,
+        eachRowArea: eachRowArea,
         buildSpans: buildSpans,
         spanBorders: spanBorders,
         colSpanWidth: colSpanWidth,

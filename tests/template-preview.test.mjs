@@ -149,6 +149,27 @@ test('itemKey prefers area name', () => {
   assert.equal(TP.itemKey({ row: 1, col: 2 }), 'r1c2');
 });
 
+test('Template fillType shows [Param] as <Param>', () => {
+  const fmt = { fillType: 'Template' };
+  assert.equal(T.displayText({ text: 'Лист [НомерЛиста]', parameter: '' }, fmt), 'Лист <НомерЛиста>');
+  assert.equal(T.displayText({ text: '[8]', parameter: '' }, { fillType: 'Text' }), '[8]');
+});
+
+test('row area rail has top and bottom edges, and grid has matching red lines', () => {
+  const container = fakeNode('div');
+  const sandbox = loadRenderSandbox();
+  const parsed = sandbox.window.TemplatePreview.parse(mini);
+  sandbox.window.TemplatePreview.render(parsed.model, container, {});
+  const labels = walkMatch(container, '.tp-area-label');
+  assert.equal(labels.length, 1);
+  assert.equal(labels[0].textContent, 'Шапка');
+  const lines = walkMatch(container, '.tp-row-area-line');
+  assert.equal(lines.length, 2, 'start and end line for one area');
+  const edges = lines.map((n) => n.getAttribute('data-edge')).sort();
+  assert.deepEqual(edges, ['end', 'start']);
+  assert.equal(hasAncestorClass(lines[0], 'tp-grid-wrap'), true);
+});
+
 test('outline icons differ for row vs column areas', () => {
   const row = TP.outlineIcon({ areaType: 'Rows' });
   const col = TP.outlineIcon({ areaType: 'Columns' });
@@ -321,6 +342,23 @@ test('UPD Template.xml: areas, barcode drawing, parameter cells', () => {
   assert.ok(groups.length >= 3);
   const area = T.areaForRow(m, 17);
   assert.equal(area && area.name, 'Строка');
+  const sheetCell = T.cellAt(m.rows[49], 2);
+  const sheetFmt = T.formatByIndex(m.formats, sheetCell && sheetCell.formatIndex);
+  assert.equal(T.displayText(sheetCell, sheetFmt), 'Лист <НомерЛиста>');
+
+  const rowAreas = [];
+  T.eachRowArea(m, (it) => rowAreas.push(it.name));
+  assert.ok(rowAreas.includes('Шапка'));
+  assert.ok(rowAreas.includes('Подвал'));
+  assert.equal(rowAreas.includes('ОбластьЗапись'), false);
+
+  const container = fakeNode('div');
+  const sandbox = loadRenderSandbox();
+  sandbox.window.TemplatePreview.render(parsed.model, container, {});
+  const hlines = walkMatch(container, '.tp-row-area-line');
+  assert.equal(hlines.length, rowAreas.length * 2);
+  const labels = walkMatch(container, '.tp-area-label').map((n) => n.textContent);
+  assert.ok(labels.includes('ПодвалНакладной'));
   const set = T.viewColumnSet(m);
   assert.ok(set.size >= 19);
   const gStroka = T.groupsOf(m).find((g) => g.start <= 17 && 17 < g.end);
@@ -329,6 +367,41 @@ test('UPD Template.xml: areas, barcode drawing, parameter cells', () => {
   assert.equal(gStroka.columnsID, header.columnsID);
   assert.ok(gStroka.start <= header.beginRow);
   assert.ok(gStroka.end > header.endRow);
+  const gItogo = T.groupsOf(m).find((g) => g.start <= 19 && 19 < g.end);
+  const spansItogo = T.buildSpans(m, gItogo.start, gItogo.end, gItogo.columnsID);
+  const itogoOrigin = spansItogo.origin[19 - gItogo.start][2];
+  assert.ok(itogoOrigin, 'Итого «Всего к оплате» must be a merged origin');
+  assert.equal(itogoOrigin.colspan, 6);
+  const tableSet = T.columnSetOf(m, gItogo.columnsID);
+  assert.ok(T.colSpanWidth(tableSet, 2, 6) > T.colSpanWidth(tableSet, 2, 1) * 3);
+});
+
+test('UPD MXL Итого «Всего к оплате» spans the same columns as Template.xml', () => {
+  const sandbox = loadWebModules(root, ['xml-util.js', 'mxl-preview.js', 'template-preview.js'], {
+    document: { createElement: fakeNode }
+  });
+  const parsed = sandbox.window.MxlPreview.parse(fs.readFileSync(path.join(root, 'testdata', 'upd.mxl'), 'utf8'));
+  assert.equal(parsed.error, undefined, parsed.error);
+  const m = parsed.model;
+  const gItogo = T.groupsOf(m).find((g) => g.start <= 19 && 19 < g.end);
+  assert.ok(gItogo);
+  const cell = T.cellAt(m.rows[19], 2);
+  assert.ok(String(cell && cell.text).includes('Всего к оплате'));
+  const spans = T.buildSpans(m, gItogo.start, gItogo.end, gItogo.columnsID);
+  const origin = spans.origin[19 - gItogo.start][2];
+  assert.ok(origin, 'MXL column merge r=-1 must make Итого a 6-col origin');
+  assert.equal(origin.colspan, 6);
+
+  const container = fakeNode('div');
+  sandbox.window.TemplatePreview.render(m, container, {});
+  const totalTd = walkMatch(container, 'td').find((td) =>
+    td.getAttribute('data-row') === '19' && td.getAttribute('data-col') === '2'
+  );
+  assert.ok(totalTd, 'rendered Всего к оплате cell');
+  assert.equal(totalTd.colSpan, 6);
+  assert.equal(totalTd.textContent, 'Всего к оплате (9)');
+  const expectedWidth = String(Math.round(T.colSpanWidth(T.columnSetOf(m, gItogo.columnsID), 2, 6) * 10) / 10) + 'px';
+  assert.equal(totalTd.style.minWidth, expectedWidth);
 });
 
 test('pictureDataUrl maps 1-based drawing pictureIndex onto 0-based pictures', () => {
@@ -471,8 +544,14 @@ test('render draws a top rail for vertical areas and Auto overflow', () => {
   assert.ok(container.querySelector('.tp-col-area-lines'));
   const autoCell = walkMatch(container, '.tp-place-auto');
   assert.ok(autoCell.length >= 1);
-  assert.equal(autoCell[0].style.overflow, 'visible');
   assert.equal(autoCell[0].style.whiteSpace, 'nowrap');
+  // Auto spills over the empty columns 1..3 and stops at the parameter in
+  // column 4: the text box is wider than its own column but clipped there.
+  const set = parsed.model.columnSets[0];
+  const spill = set.widths[0] + set.widths[1] + set.widths[2] + set.widths[3];
+  assert.equal(autoCell[0].style.overflow, 'hidden');
+  assert.equal(autoCell[0].style.width, (Math.round(spill * 10) / 10) + 'px');
+  assert.ok(spill > set.widths[0]);
   const hasText = walkMatch(container, '.tp-has-text');
   assert.ok(hasText.length >= 1);
 });
@@ -651,4 +730,132 @@ test('2-NDFL template has nested vertical areas ЛеваяЧасть/Вычет�
   const left = cols.find((x) => x.name === 'ЛеваяЧасть');
   assert.equal(left.beginColumn, 0);
   assert.equal(left.endColumn, 25);
+});
+
+test('a cell inherits the format of its row but never its width, height or fillType', () => {
+  const model = {
+    formats: [
+      { font: '1', textColor: '#ff0000', height: '100', width: '40', fillType: 'Parameter' },
+      { textColor: '#0000ff' }
+    ],
+    fonts: []
+  };
+  const row = { formatIndex: 1, cells: [] };
+  const own = T.effectiveFormat(model, row, { formatIndex: 2 });
+  assert.equal(own.font, '1', 'font comes from the row');
+  assert.equal(own.textColor, '#0000ff', 'the cell wins where it says something');
+  assert.equal(own.height, undefined, 'height belongs to the row');
+  assert.equal(own.width, undefined, 'width belongs to the column');
+  assert.equal(own.fillType, undefined, 'a row must not turn its cells into parameters');
+  const bare = T.effectiveFormat(model, row, { formatIndex: 0 });
+  assert.equal(bare.font, '1');
+  assert.equal(bare.textColor, '#ff0000');
+  assert.equal(T.effectiveFormat(model, { formatIndex: 0 }, { formatIndex: 2 }).textColor, '#0000ff');
+});
+
+test('fill patterns become a hatch over the background, colourless ones are skipped', () => {
+  assert.equal(T.patternFill(null), null);
+  assert.equal(T.patternFill({ pattern: '3' }), null, 'no colour means no pattern');
+  assert.equal(T.patternFill({ pattern: '255', patternColor: '#ff0000' }), null);
+  const solid = T.patternFill({ pattern: '0', patternColor: '#ff0000' });
+  assert.equal(solid.color, '#ff0000');
+  const hatch = T.patternFill({ pattern: '7', patternColor: '#00ff00' });
+  assert.ok(hatch.image.startsWith('url("data:image/svg+xml'));
+  assert.ok(hatch.image.includes(encodeURIComponent('#00ff00')));
+  const other = T.patternFill({ pattern: '8', patternColor: '#00ff00' });
+  assert.notEqual(other.image, hatch.image, 'each pattern draws its own tile');
+  assert.equal(T.patternFill({ pattern: '18', patternColor: '#00ff00' }), null);
+});
+
+test('border colour comes from the format instead of always being black', () => {
+  const model = { lines: [{ width: 1, style: 'Solid' }], formats: [], fonts: [] };
+  assert.equal(T.sideBorder(model, { leftBorder: '0' }, 'left'), '1px solid #000');
+  assert.equal(T.sideBorder(model, { leftBorder: '0', bordersColor: '#3366ff' }, 'left'),
+    '1px solid #3366ff');
+  assert.equal(T.borderCss({ width: 2, style: 'Dotted' }, '#112233'), '2px dotted #112233');
+});
+
+test('vertical alignment falls back to the default the model declares', () => {
+  assert.equal(T.defaultVAlign({}), 'top');
+  assert.equal(T.defaultVAlign({ defaults: { verticalAlignment: 'Bottom' } }), 'bottom');
+  assert.equal(T.alignCss('', 'v', 'bottom'), 'bottom');
+  assert.equal(T.alignCss('Top', 'v', 'bottom'), 'top', 'an explicit value still wins');
+  assert.equal(T.alignCss('Center', 'v', 'bottom'), 'middle');
+});
+
+test('Block placement repeats the value until it covers the cell', () => {
+  assert.equal(T.placementOf({ textPlacement: 'Block' }), 'block');
+  assert.equal(T.placementOf({ textPlacement: 'Cut' }), 'cut');
+  const filled = T.blockRepeat('ab', 200, 8);
+  assert.ok(filled.length > 2 && filled.startsWith('abab'));
+  assert.equal(filled.replace(/ab/g, ''), '');
+  assert.equal(T.blockRepeat('', 200, 8), '');
+  // a line that already overruns the cell has nothing left to fill
+  const long = 'очень длинная строка, которая и так не помещается в ячейку';
+  assert.equal(T.blockRepeat(long, 20, 8), long);
+  // every line is filled on its own
+  const two = T.blockRepeat('ab\ncd', 200, 8).split('\n');
+  assert.equal(two.length, 2);
+  assert.ok(two[0].startsWith('abab') && two[1].startsWith('cdcd'));
+  const wide = T.blockRepeat('x', 100000, 8);
+  assert.ok(wide.length <= 200, 'the repeat count stays bounded');
+});
+
+test('Auto spill stops at a filled neighbour and follows the alignment', () => {
+  const set = { size: 5, widths: [10, 20, 20, 20, 20] };
+  const row = { cells: [{ col: 2, formatIndex: 0, text: 'x' }, { col: 4, formatIndex: 0, text: 'y' }] };
+  const model = { formats: [], fonts: [] };
+  const spans = {
+    covered: [[false, false, false, false, false]],
+    origin: [[null, null, null, null, null]]
+  };
+  // column 0, left aligned: runs over the empty column 1 and stops at column 2
+  const right = T.spillBox(model, row, set, spans, 0, 0, 1, 'left');
+  assert.equal(right.left, 0);
+  assert.equal(right.width, 30);
+  // column 3, right aligned: grows leftwards only, up to the filled column 2
+  const left = T.spillBox(model, row, set, spans, 0, 3, 1, 'right');
+  assert.equal(left.left, 0);
+  assert.equal(left.width, 20);
+  // A centred value grows symmetrically so it stays over its own column: with
+  // column 2 filled there is nothing to the right of column 1, so it does not
+  // drift left either.
+  const pinned = T.spillBox(model, row, set, spans, 0, 1, 1, 'center');
+  assert.equal(pinned.left, 0);
+  assert.equal(pinned.width, 20);
+  const openBoth = { size: 5, widths: [20, 20, 20, 20, 20] };
+  const edges = { cells: [{ col: 0, formatIndex: 0, text: 'a' }, { col: 4, formatIndex: 0, text: 'b' }] };
+  const mid = T.spillBox(model, edges, openBoth, spans, 0, 2, 1, 'center');
+  assert.equal(mid.left, -20);
+  assert.equal(mid.width, 60);
+});
+
+test('drawings render their caption, keep their frame and skip unsupported kinds', () => {
+  const container = fakeNode('div');
+  const sandbox = loadRenderSandbox();
+  const model = {
+    height: 1,
+    rows: [{ columnsID: '', formatIndex: 0, empty: false, cells: [] }],
+    columnSets: [{ id: '', size: 2, widths: [40, 40], formatIndex: {} }],
+    columnSetById: { '': { id: '', size: 2, widths: [40, 40], formatIndex: {} } },
+    formats: [{ drawingBorder: '0', bordersColor: '#ff0000', textColor: '#00ff00' }],
+    fonts: [],
+    lines: [{ width: 1, style: 'Solid' }],
+    pictures: [],
+    merges: [],
+    unmerges: [],
+    namedItems: [],
+    drawings: [
+      { drawingType: 'Text', id: 0, text: 'Подпись', formatIndex: 1, beginRow: 0, endRow: 0, beginColumn: 0, endColumn: 1, beginRowOffset: 0, endRowOffset: 0, beginColumnOffset: 0, endColumnOffset: 0, pictureIndex: 0, zOrder: 0 },
+      { drawingType: 'Other', id: 1, text: 'Диаграмма', formatIndex: 0, beginRow: 0, endRow: 0, beginColumn: 0, endColumn: 1, beginRowOffset: 0, endRowOffset: 0, beginColumnOffset: 0, endColumnOffset: 0, pictureIndex: 0, zOrder: 1 }
+    ]
+  };
+  sandbox.window.TemplatePreview.render(model, container, {});
+  const boxes = walkMatch(container, '.tp-drawing');
+  assert.equal(boxes.length, 1, 'the Other object must not be drawn');
+  assert.equal(boxes[0].style.border, '1px solid #ff0000');
+  const caps = walkMatch(container, '.tp-drawing-text');
+  assert.equal(caps.length, 1);
+  assert.equal(caps[0].textContent, 'Подпись');
+  assert.equal(caps[0].style.color, '#00ff00');
 });

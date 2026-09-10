@@ -169,6 +169,14 @@ test('named items: nested Rows range and drawing', () => {
   assert.equal(items[1].drawingID, 14);
 });
 
+test('cell marker bit 8 is detailParameter and does not steal localized text', () => {
+  const cell = T.cellFromValue(T.parseBody('{24,101,"Товар",{1,1,{"","ТоварКод"}},0}')[0].v);
+  assert.equal(cell.text, 'ТоварКод');
+  assert.equal(cell.detailParameter, 'Товар');
+  const plain = T.cellFromValue(T.parseBody('{16,103,{1,1,{"","ТоварНаименование"}},0}')[0].v);
+  assert.equal(plain.text, 'ТоварНаименование');
+});
+
 test('format bit 15 is fillType Parameter/Template/Text', () => {
   const param = T.formatFromValue(T.parseBody('{50129,0,2,-92,124,6,8,3,1}')[0].v);
   assert.equal(param.fillType, 'Parameter');
@@ -199,6 +207,10 @@ test('UPD MXL: named areas, title, parameters, barcode', () => {
   assert.ok(texts.some((t) => String(t).includes('Универсальный')), 'title missing');
   assert.ok(params.includes('Номер'));
   assert.ok(params.includes('ТоварНаименование'));
+  assert.ok(params.includes('ТоварКод'), 'ТоварКод lost: marker 24 / detailParameter');
+  assert.ok(params.includes('ПредставлениеПоставщика'));
+  assert.ok(params.includes('ФИОРуководителя'));
+  assert.ok(params.includes('ПредставлениеГТД'));
   assert.ok(!params.includes('от'), 'static «от» must not become a parameter');
   assert.equal(m.rows[1].columnsID, shapka.columnsID);
   const barcode = m.drawings.find((d) => d.pictureIndex === 2);
@@ -206,4 +218,92 @@ test('UPD MXL: named areas, title, parameters, barcode', () => {
   assert.equal(barcode.beginRow, 1);
   assert.equal(barcode.beginColumn, 10);
   assert.ok(m.pictures.some((p) => p.data && p.data.length > 20));
+  const colMerge = m.merges.find((x) => x.r === -1 && x.c === 2 && x.w === 5);
+  assert.ok(colMerge, 'column-wide merge cols 2-7 missing');
+  assert.equal(colMerge.columnsID, '39a7acbe-e43b-412e-b84b-633884f6d03c');
+  const unmergeStroka = m.unmerges.find((x) => x.r === 17 && x.c === 2);
+  assert.ok(unmergeStroka, 'Строка must unmerge cols 2-7');
+});
+
+test('columnMergesFromValue reads r=-1 records with columns GUID', () => {
+  const v = T.parseBody('{2,{2,-1,7,-1,0,39a7acbe-e43b-412e-b84b-633884f6d03c},{6,-1,11,-1,0,f01e015f-de4c-4f97-9fbe-a244c4c30c6c}}')[0];
+  const items = T.columnMergesFromValue(v);
+  assert.equal(items.length, 2);
+  assert.equal(items[0].left, 2);
+  assert.equal(items[0].right, 7);
+  assert.equal(items[0].columnsID, '39a7acbe-e43b-412e-b84b-633884f6d03c');
+  const packed = T.mergesFromValue(T.parseBody('{2,{2,17,7,17,2},{16,19,17,19,0}}')[0]);
+  assert.equal(packed.unmerges.length, 1);
+  assert.equal(packed.unmerges[0].top, 17);
+  assert.equal(packed.merges.length, 1);
+  assert.equal(packed.merges[0].top, 19);
+});
+
+test('unknown MOXCEL variant is rejected instead of parsed as noise', () => {
+  const good = readMxlText('mxl-capabilities.mxl');
+  assert.equal(T.isUnknownMoxcel(good), false);
+  // versionHigh 9 instead of 8
+  const bad = 'MOXCEL\u0000\u0009\u0000\u0001\u0000\u000c\u0000\uFEFF{8,1,9}';
+  assert.equal(T.isUnknownMoxcel(bad), true);
+  const parsed = MP.parse(bad);
+  assert.ok(parsed.error && parsed.error.includes('неизвестный вариант'));
+  // a headerless body (what the tests and the viewer pass around) still parses
+  assert.equal(T.isUnknownMoxcel(T.stripHeader(good)), false);
+});
+
+test('pattern and background are two layers, border colour survives', () => {
+  const doc = {
+    colors: [{ rgb: '#ff0000' }, { rgb: '#00ff00' }, { rgb: '#0000ff' }]
+  };
+  const solid = T.convertFormat({ pattern: 0, pattern_color: 1, bg_color: 0 }, doc);
+  assert.equal(solid.backColor, '#ff0000');
+  assert.equal(solid.pattern, '0');
+  assert.equal(solid.patternColor, '#00ff00');
+  const hatch = T.convertFormat({ pattern: 7, pattern_color: 2, bg_color: 0 }, doc);
+  assert.equal(hatch.backColor, '#ff0000', 'background must survive under a hatch');
+  assert.equal(hatch.pattern, '7');
+  assert.equal(hatch.patternColor, '#0000ff');
+  // no pattern colour means no pattern at all
+  assert.equal(T.convertFormat({ pattern: 3 }, doc).pattern, undefined);
+  assert.equal(T.convertFormat({ pattern: 255, pattern_color: 1 }, doc).pattern, undefined);
+  assert.equal(T.convertFormat({ borders_color: 2 }, doc).bordersColor, '#0000ff');
+});
+
+test('a graphic object keeps its caption, its frame index and the default alignment', () => {
+  const parsed = MP.parse(readMxlText('mxl-patterns-drawings.mxl'));
+  assert.ok(!parsed.error, parsed.error);
+  const m = parsed.model;
+  assert.equal(m.defaults.verticalAlignment, 'Bottom');
+  const caption = m.drawings.find((d) => d.drawingType === 'Text');
+  assert.ok(caption, 'no text drawing');
+  assert.ok(caption.text.includes('Текстовый рисунок'));
+  const rect = m.drawings.find((d) => d.drawingType === 'Rectangle');
+  assert.equal(rect.text, 'Прямоугольник');
+  assert.ok(m.drawings.some((d) => d.drawingType === 'Other'), 'Other kind must reach the model');
+  const framed = T.convertFormat({ border_left: 3, border_bottom: 4 }, { colors: [] });
+  assert.equal(framed.drawingBorder, '3');
+  assert.equal(T.convertFormat({ border_bottom: 4 }, { colors: [] }).drawingBorder, '4');
+  assert.equal(T.convertFormat({}, { colors: [] }).drawingBorder, undefined);
+});
+
+test('the grid grows with merges, extra groups leave undefined columns out', () => {
+  const parsed = MP.parse(readMxlText('mxl-borders-merges.mxl'));
+  const bottom = Math.max(...parsed.doc.merges.map((x) => x.bottom));
+  assert.ok(parsed.model.height > bottom, 'a merge must not fall outside the grid');
+  // An extra group is its own band: a column it never defines is simply not
+  // there, or the band inflates with phantom columns on the right. The default
+  // group describes the whole sheet, so it keeps the fallback width — and so
+  // does any column that actually carries a cell.
+  const group = { id: 'g', columns: [{ col: 0, format: 1 }] };
+  const formats = [{ width: '40' }];
+  const extra = T.convertColumnSet('g', group, formats, 3, false, null);
+  assert.equal(extra.size, 3);
+  assert.equal(extra.widths[0], 40 * 7 / 8);
+  assert.equal(extra.widths[1], 0);
+  assert.equal(extra.widths[2], 0);
+  const held = T.convertColumnSet('g', group, formats, 3, false, { 2: true });
+  assert.equal(held.widths[1], 0);
+  assert.ok(held.widths[2] > 0, 'a column with a cell in it must stay visible');
+  const def = T.convertColumnSet('', group, formats, 3, true, null);
+  assert.ok(def.widths[1] > 0 && def.widths[2] > 0);
 });

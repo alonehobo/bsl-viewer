@@ -204,6 +204,40 @@ int main()
         RemoveDirectoryW(root.c_str());
     }
 
+    printf("\n== form layout lookup for a form descriptor ==\n");
+    {
+        std::wstring root = TempFilePath(L"bslview_form_layout");
+        std::wstring formsDir = root + L"\\Forms";
+        std::wstring layoutDir = formsDir + L"\\ФормаОтчета\\Ext";
+        std::wstring layout = layoutDir + L"\\Form.xml";
+        std::wstring meta = formsDir + L"\\ФормаОтчета.xml";
+
+        CreateDirectoryW(root.c_str(), NULL);
+        CreateDirectoryW(formsDir.c_str(), NULL);
+        CreateDirectoryW((formsDir + L"\\ФормаОтчета").c_str(), NULL);
+        CreateDirectoryW(layoutDir.c_str(), NULL);
+
+        Check(FindFormLayoutForMeta(meta.c_str()).empty(),
+              "no layout on disk yet -> empty");
+
+        WriteRaw(layout, "<Form/>", 7);
+        Check(FindFormLayoutForMeta(meta.c_str()) == layout,
+              "descriptor -> sibling folder's Ext/Form.xml");
+
+        Check(FindFormLayoutForMeta(layout.c_str()).empty(),
+              "Ext/Form.xml itself is not a descriptor");
+
+        std::wstring notInForms = root + L"\\ФормаОтчета.xml";
+        Check(FindFormLayoutForMeta(notInForms.c_str()).empty(),
+              "xml outside a Forms/ folder is not a descriptor");
+
+        DeleteFileW(layout.c_str());
+        RemoveDirectoryW(layoutDir.c_str());
+        RemoveDirectoryW((formsDir + L"\\ФормаОтчета").c_str());
+        RemoveDirectoryW(formsDir.c_str());
+        RemoveDirectoryW(root.c_str());
+    }
+
     printf("\n== language mapping ==\n");
     {
         Check(!strcmp(MonacoLanguageForPath(L"a\\b\\Module.bsl"), "bsl"), ".bsl -> bsl");
