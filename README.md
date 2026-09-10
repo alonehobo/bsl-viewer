@@ -105,6 +105,10 @@ WLX-плагин для Total Commander, обеспечивающий просм
 
 `.mxl` (MXL8, 1С 8.x / BAS) разбирается тем же способом: скобочный формат из [azubar/SpreadSheet](https://github.com/azubar/SpreadSheet) превращается в ту же сетку. Файлы 1С 7.7 (бинарный MOXCEL) не поддерживаются.
 
+**Lister F3**
+
+![Печатная форма во вьюере](screens/viewer-template-2ndfl.png)
+
 ## Сборка
 
 ### Требования
