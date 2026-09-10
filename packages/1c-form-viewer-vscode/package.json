@@ -2,7 +2,7 @@
   "name": "1c-form-viewer-vscode",
   "displayName": "1C Form Viewer",
   "description": "Visual preview of 1C managed forms, spreadsheet templates and MXL files in VS Code",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "publisher": "alonehobo",
   "author": {
     "name": "Sergey Martemyanov",
@@ -65,8 +65,14 @@
     }
   },
   "scripts": {
-    "build": "node scripts/copy-assets.mjs",
+    "sync": "node ../1c-preview-core/scripts/sync.mjs",
+    "build": "npm run sync && node scripts/copy-assets.mjs",
+    "verify:assets": "node ../1c-preview-core/scripts/verify.mjs",
+    "vscode:prepublish": "npm run build",
     "test": "npm run build && node --test tests/*.test.mjs",
     "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "1c-preview-core": "*"
   }
 }

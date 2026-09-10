@@ -4,10 +4,13 @@
   "workspaces": [
     "packages/*"
   ],
-  "description": "BSLView (Total Commander Lister plugin) and BSLEdit — web/ viewer scripts and their Node test suite. The C++ plugin itself is built by build.bat, not npm.",
+  "description": "BSLView (Total Commander Lister plugin), BSLEdit, the 1c-form-viewer MCP server and the VS Code extension. All four render 1C forms and templates with the shared code in packages/1c-preview-core. The C++ plugin itself is built by build.bat, not npm.",
   "scripts": {
-    "test": "node --test tests/*.test.mjs && npm run test --workspace=1c-form-viewer && npm run test --workspace=1c-form-viewer-vscode",
+    "sync": "npm run sync --workspace=1c-preview-core",
+    "verify": "npm run verify --workspace=1c-preview-core",
+    "test": "npm run sync && npm run test:viewer && npm run test --workspace=1c-preview-core && npm run test --workspace=1c-form-viewer && npm run test --workspace=1c-form-viewer-vscode && npm run verify",
     "test:viewer": "node --test tests/*.test.mjs",
+    "test:core": "npm run test --workspace=1c-preview-core",
     "build:mcp": "npm run build --workspace=1c-form-viewer",
     "build:vscode": "npm run build --workspace=1c-form-viewer-vscode"
   }

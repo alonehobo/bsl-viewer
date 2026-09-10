@@ -37,8 +37,8 @@ npm test --workspace=1c-form-viewer-vscode
 $root = "C:\Users\Serge\YandexDisk\Cursor\OtherProjects\tc-bsl-viewer"
 Set-Location "$root\packages\1c-form-viewer-vscode"
 npm run build
-npx --yes @vscode/vsce package --no-dependencies --out "$root\1c-form-viewer-vscode-0.1.4.vsix"
-code --install-extension "$root\1c-form-viewer-vscode-0.1.4.vsix" --force
+npx --yes @vscode/vsce package --no-dependencies --out "$root\1c-form-viewer-vscode-0.1.6.vsix"
+code --install-extension "$root\1c-form-viewer-vscode-0.1.6.vsix" --force
 ```
 
 Сборка ассетов выполняется из корневой папки `web/`:

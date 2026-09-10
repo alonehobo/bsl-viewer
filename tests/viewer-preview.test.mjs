@@ -42,7 +42,7 @@ function stubDom() {
 function loadViewer() {
   const sandbox = loadWebModules(
     root,
-    ['xml-util.js', 'bsl-format.js', 'form-preview.js', 'template-preview.js', 'mxl-preview.js', 'viewer.js'],
+    ['xml-util.js', 'bsl-format.js', 'form-preview.js', 'template-preview.js', 'mxl-preview.js', 'providers.js', 'viewer.js'],
     stubDom()
   );
   return sandbox.window.ViewerInternals;
@@ -79,11 +79,25 @@ test('every provider names a parser and a viewer module and its chrome', () => {
   assert.ok(V.providers.length >= 3);
   for (const p of V.providers) {
     assert.ok(p.id, 'provider has an id');
-    assert.equal(typeof p.detect, 'function');
-    assert.equal(typeof p.parse, 'function');
     assert.ok(p.parser && p.viewer, `${p.id} names both modules`);
+    assert.ok(p.label, `${p.id} has a display label`);
     assert.ok(p.rootCls && p.emptyCls && p.emptyMsg, `${p.id} has an empty-state`);
     assert.ok(p.outlineTitle && p.sourceTitle, `${p.id} has button titles`);
+  }
+});
+
+/* Detection and parsing moved to the shared registry so all three hosts claim
+ * files identically; the entries themselves are now plain data. */
+test('the shared registry, not each entry, owns detect and parse', () => {
+  const core = V.PreviewProviders;
+  assert.equal(typeof core.detect, 'function');
+  assert.equal(typeof core.parse, 'function');
+  assert.equal(typeof core.ready, 'function');
+  assert.equal(typeof core.view, 'function');
+  assert.ok(core.unsupportedMessage);
+  for (const p of V.providers) {
+    assert.equal(p.detect, undefined, `${p.id} carries no detect of its own`);
+    assert.equal(p.parse, undefined, `${p.id} carries no parse of its own`);
   }
 });
 

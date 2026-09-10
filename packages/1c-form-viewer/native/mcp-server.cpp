@@ -23,6 +23,16 @@
 #include <string>
 #include <string_view>
 #include <thread>
+
+/* This build's identity, in one place. The Node server takes its version from
+ * package.json; this one cannot, so keep the two constants below the only
+ * copies and bump them together with a release. */
+#ifndef ONE_C_FORM_VIEWER_VERSION
+#define ONE_C_FORM_VIEWER_VERSION "0.2.0"
+#endif
+#define ONE_C_FORM_VIEWER_VERSION_W L"" ONE_C_FORM_VIEWER_VERSION
+#define ONE_C_FORM_VIEWER_NAME "1c-form-viewer-native"
+
 #include <vector>
 
 #pragma comment(lib, "ws2_32.lib")
@@ -654,7 +664,7 @@ public:
         const std::string method = request.get("method") ? request.get("method")->asString() : std::string();
         if (!id && method.rfind("notifications/", 0) == 0) return {};
         try {
-            if (method == "initialize") return "{\"jsonrpc\":\"2.0\",\"id\":" + idRaw + ",\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"1c-form-viewer-native\",\"version\":\"0.2.0\"}}}";
+            if (method == "initialize") return "{\"jsonrpc\":\"2.0\",\"id\":" + idRaw + ",\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"" ONE_C_FORM_VIEWER_NAME "\",\"version\":\"" ONE_C_FORM_VIEWER_VERSION "\"}}}";
             if (method == "ping") return "{\"jsonrpc\":\"2.0\",\"id\":" + idRaw + ",\"result\":{}}";
             if (method == "tools/list") return "{\"jsonrpc\":\"2.0\",\"id\":" + idRaw + ",\"result\":{\"tools\":" + toolSchemas() + "}}";
             if (method != "tools/call") return failure(idRaw, "Unknown MCP method: " + method);
@@ -747,7 +757,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (argument == L"--help" || argument == L"-h") {
             std::wcout << L"1c-form-viewer-native --stdio [--root PATH ... | --allow-any-path]\n";
             return 0;
-        } else if (argument == L"--version" || argument == L"-v") { std::wcout << L"0.2.0\n"; return 0; }
+        } else if (argument == L"--version" || argument == L"-v") { std::wcout << ONE_C_FORM_VIEWER_VERSION_W << std::endl; return 0; }
         else if (argument.rfind(L"--", 0) == 0) { std::wcerr << L"Unknown option: " << argument << L"\n"; return 2; }
     }
 

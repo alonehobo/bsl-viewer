@@ -9,46 +9,43 @@ var current = null;
 
 function fail(message) { throw new Error(message); }
 function itemId(item) { return item && (item.id || item.name) ? String(item.id || item.name) : ''; }
-function provider(format) {
-    if (format === 'form') return { parser: root.FormPreview, viewer: root.FormPreview };
-    if (format === 'template') return { parser: root.TemplatePreview, viewer: root.TemplatePreview };
-    if (format === 'mxl') return { parser: root.MxlPreview, viewer: root.TemplatePreview };
-    return null;
-}
 
-function detect(input) {
-    if (root.FormPreview.detect(input.content)) return 'form';
-    if (root.MxlPreview.detect(input.content)) return 'mxl';
-    if (root.TemplatePreview.detect(input.content)) return 'template';
-    fail('The file is not a supported 1C form, spreadsheet template, or MXL document.');
+/* Which module claims a file, and which one draws it, is decided by the shared
+ * registry in packages/1c-preview-core/browser/providers.js — the same one the
+ * Total Commander viewer and the VS Code webview use. Provider ids are the
+ * `format` values this page reports back over MCP. */
+var Providers = root.PreviewProviders;
+
+function providerFor(format) {
+    var entry = Providers.byId(format);
+    if (!entry) fail('Unknown preview format: ' + format);
+    return entry;
 }
 
 function renderCurrent() {
-    var p = provider(current.format);
+    var entry = providerFor(current.format);
     host.hidden = false;
     empty.hidden = true;
-    p.viewer.render(current.model, host, {
+    Providers.view(entry).render(current.model, host, {
         onSelect: function (item) { current.selectedId = itemId(item); }
     });
-    formatLabel.textContent = current.format === 'form' ? 'Форма 1С' : (current.format === 'mxl' ? 'MXL' : 'Макет 1С');
+    formatLabel.textContent = entry.label;
     pathLabel.textContent = current.path;
     pathLabel.title = current.path;
 }
 
 function load(input) {
-    var format = detect(input);
-    var p = provider(format);
-    var parsed = format === 'form'
-        ? p.parser.parse(input.content, input.objectMeta || '')
-        : p.parser.parse(input.content);
+    var entry = Providers.detect(input.content, {});
+    if (!entry) fail(Providers.unsupportedMessage);
+    var parsed = Providers.parse(entry, input.content, { objectMeta: input.objectMeta });
     if (!parsed || parsed.error || !parsed.model) fail((parsed && parsed.error) || 'The renderer did not produce a model.');
     current = {
-        format: format,
+        format: entry.id,
         path: input.path,
         content: input.content,
         objectMeta: input.objectMeta || '',
         model: parsed.model,
-        outline: p.viewer.outline(parsed.model, input.content) || [],
+        outline: Providers.view(entry).outline(parsed.model, input.content) || [],
         selectedId: ''
     };
     renderCurrent();
@@ -213,9 +210,9 @@ function inspect(options) {
 function selectElement(id) {
     var item = byId(id);
     if (!item) fail('Unknown element_id: ' + id);
-    var p = provider(current.format);
-    if (!p.viewer.highlight) fail('The active renderer does not support selection.');
-    var hit = p.viewer.highlight(host, String(id));
+    var view = Providers.view(providerFor(current.format));
+    if (!view.highlight) fail('The active renderer does not support selection.');
+    var hit = view.highlight(host, String(id));
     current.selectedId = String(id);
     return { found: !!hit, element: item, state: state() };
 }
@@ -337,9 +334,17 @@ root.AgentViewer = {
     capture: capture
 };
 
+/* Internal mode: the page pulls the document and its commands over HTTP instead
+ * of being driven from outside.
+ *
+ * Only the native C++ server implements the command channel — the Node server
+ * drives this same page through the browser automation API and serves no
+ * `command` endpoint. So the poll stops itself the first time the endpoint is
+ * absent rather than issuing a 404 five times a second forever. */
 if (new URLSearchParams(window.location.search).get('internal') === '1') {
     var lastRevision = -1;
     var commandBusy = false;
+    var commandTimer = 0;
 
     function postResult(command, result) {
         return fetch('result', {
@@ -378,7 +383,13 @@ if (new URLSearchParams(window.location.search).get('internal') === '1') {
         if (commandBusy) return;
         commandBusy = true;
         fetch('command', { cache: 'no-store' })
-            .then(function (response) { return response.status === 204 ? null : response.json(); })
+            .then(function (response) {
+                if (response.status === 404) {
+                    window.clearInterval(commandTimer);
+                    return null;
+                }
+                return response.status === 204 ? null : response.json();
+            })
             .then(function (command) { return command ? executeCommand(command) : null; })
             .catch(function () {})
             .finally(function () { commandBusy = false; });
@@ -403,6 +414,6 @@ if (new URLSearchParams(window.location.search).get('internal') === '1') {
 
     refreshState();
     window.setInterval(refreshState, 300);
-    window.setInterval(pollCommand, 120);
+    commandTimer = window.setInterval(pollCommand, 120);
 }
 })(window);

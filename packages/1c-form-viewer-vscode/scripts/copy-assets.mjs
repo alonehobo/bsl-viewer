@@ -1,15 +1,21 @@
-import { cp, mkdir, rm } from 'node:fs/promises';
+/* Adds this extension's own webview shell to media/, which the core sync has
+ * already filled with the shared renderers, and writes the generated
+ * media/assets.json so extension.js never hardcodes an asset name or a load
+ * order of its own. */
+import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { scripts, styles } from '1c-preview-core/manifest.mjs';
 
-const packageDir = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.resolve(packageDir, '..', '..', '..');
-const sourceDir = path.join(rootDir, 'web');
-const targetDir = path.join(packageDir, '..', 'media');
-const assets = ['xml-util.js', 'form-preview.js', 'template-preview.js', 'mxl-preview.js', 'viewer.css'];
+const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const mediaDir = path.join(packageDir, 'media');
 
-await rm(targetDir, { recursive: true, force: true });
-await mkdir(targetDir, { recursive: true });
-for (const asset of assets) await cp(path.join(sourceDir, asset), path.join(targetDir, asset));
-await cp(path.join(packageDir, '..', 'ui', 'extension.css'), path.join(targetDir, 'extension.css'));
-await cp(path.join(packageDir, '..', 'ui', 'webview.js'), path.join(targetDir, 'webview.js'));
+await mkdir(mediaDir, { recursive: true });
+for (const name of ['extension.css', 'webview.js']) {
+  await copyFile(path.join(packageDir, 'ui', name), path.join(mediaDir, name));
+}
+await writeFile(
+  path.join(mediaDir, 'assets.json'),
+  `${JSON.stringify({ scripts, styles }, null, 2)}\n`,
+  'utf8',
+);

@@ -5,6 +5,7 @@ import { parseCliArgs, HELP } from './config.js';
 import { ViewerController } from './controller.js';
 import { FileLoader } from './files.js';
 import { createMcpServer } from './mcp-server.js';
+import { VERSION } from './version.js';
 
 async function main(): Promise<void> {
   const config = parseCliArgs(process.argv.slice(2));
@@ -13,7 +14,7 @@ async function main(): Promise<void> {
     return;
   }
   if (config.version) {
-    process.stdout.write('0.1.0\n');
+    process.stdout.write(`${VERSION}\n`);
     return;
   }
   if (!config.stdio) throw new Error('Only STDIO transport is supported. Pass --stdio.');

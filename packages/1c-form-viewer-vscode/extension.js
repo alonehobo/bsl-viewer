@@ -1,63 +1,48 @@
 const vscode = require('vscode');
-const fs = require('node:fs');
 const path = require('node:path');
 
-const SUPPORTED = new Set(['.xml', '.mxl']);
+/* Encodings, form-descriptor resolution and object metadata are the same 1C
+ * rules the MCP server applies, so they live in packages/1c-preview-core and
+ * are synced into core/ at build time — never reimplemented here. */
+const core = require('./core/document.cjs');
+const assets = require('./media/assets.json');
+
 const panels = new Map();
 
 function isSupported(uri) {
-  return uri && SUPPORTED.has(path.extname(uri.fsPath).toLowerCase());
+  return !!uri && core.isSupportedExtension(uri.fsPath);
 }
 
 function normalizePath(uri) {
   return uri.toString();
 }
 
-function decodeText(bytes) {
-  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
-    return { content: new TextDecoder('utf-8').decode(bytes.subarray(3)), encoding: 'utf8-bom' };
-  }
-  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
-    return { content: new TextDecoder('utf-16le').decode(bytes.subarray(2)), encoding: 'utf16le' };
-  }
-  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
-    const body = bytes.subarray(2);
-    const swapped = new Uint8Array(body.length - (body.length % 2));
-    for (let i = 0; i < swapped.length; i += 2) {
-      swapped[i] = body[i + 1];
-      swapped[i + 1] = body[i];
-    }
-    return { content: new TextDecoder('utf-16le').decode(swapped), encoding: 'utf16be' };
-  }
-  try {
-    return { content: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: 'utf8' };
-  } catch {
-    return { content: new TextDecoder('windows-1251').decode(bytes), encoding: 'windows-1251' };
-  }
-}
-
 async function readText(uri) {
   const bytes = await vscode.workspace.fs.readFile(uri);
-  return decodeText(bytes);
+  return core.decodeText(bytes);
+}
+
+/* `Forms/ФормаСписка.xml` is the descriptor; the layout the renderers want is
+ * `Forms/ФормаСписка/Ext/Form.xml`. Opening the descriptor should show the
+ * form, the way it already does over MCP. Falls back to the original file when
+ * there is no layout beside it. */
+async function resolveDocumentUri(uri) {
+  const layout = core.formLayoutFor(uri.fsPath);
+  if (!layout) return uri;
+  const candidate = vscode.Uri.file(layout);
+  try {
+    const stat = await vscode.workspace.fs.stat(candidate);
+    return stat.type === vscode.FileType.File ? candidate : uri;
+  } catch {
+    return uri;
+  }
 }
 
 async function readObjectMeta(uri) {
-  if (path.basename(uri.fsPath).toLowerCase() !== 'form.xml') return '';
-  const extDir = path.dirname(uri.fsPath);
-  if (path.basename(extDir).toLowerCase() !== 'ext') return '';
-  const formDir = path.dirname(extDir);
-  const formsDir = path.dirname(formDir);
-  if (path.basename(formsDir).toLowerCase() !== 'forms') return '';
-  const objectDir = path.dirname(formsDir);
-  const objectName = path.basename(objectDir);
-  const candidates = [
-    path.join(path.dirname(objectDir), `${objectName}.xml`),
-    path.join(objectDir, `${objectName}.xml`),
-  ];
-  for (const candidate of candidates) {
+  for (const candidate of core.objectMetaCandidates(uri.fsPath)) {
     try {
       const value = await readText(vscode.Uri.file(candidate));
-      if (value.content.includes('MetaDataObject')) return value.content;
+      if (value.content.includes(core.OBJECT_META_MARKER)) return value.content;
     } catch {
       // Object metadata is optional for the visual preview.
     }
@@ -72,6 +57,15 @@ function createNonce() {
 function htmlFor(webview, extensionUri) {
   const nonce = createNonce();
   const media = (name) => webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', name));
+  /* Asset names and their load order come from the generated media/assets.json,
+   * written from packages/1c-preview-core/assets.manifest.json — the only place
+   * a renderer is ever named. */
+  const styleTags = assets.styles
+    .map((name) => `<link rel="stylesheet" href="${media(name)}">`)
+    .join('');
+  const scriptTags = assets.scripts
+    .map((name) => `<script nonce="${nonce}" src="${media(name)}"></script>`)
+    .join('');
   const csp = [
     `default-src 'none'`,
     `style-src ${webview.cspSource} 'unsafe-inline'`,
@@ -85,7 +79,7 @@ function htmlFor(webview, extensionUri) {
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="${media('viewer.css')}">
+${styleTags}
 <link rel="stylesheet" href="${media('extension.css')}">
 <title>1C Form Viewer</title>
 </head>
@@ -105,10 +99,7 @@ function htmlFor(webview, extensionUri) {
   </aside>
 <section id="preview-root" class="preview-pane" aria-label="Визуальное представление"></section>
 </main>
-<script nonce="${nonce}" src="${media('xml-util.js')}"></script>
-<script nonce="${nonce}" src="${media('form-preview.js')}"></script>
-<script nonce="${nonce}" src="${media('template-preview.js')}"></script>
-<script nonce="${nonce}" src="${media('mxl-preview.js')}"></script>
+${scriptTags}
 <script nonce="${nonce}" src="${media('webview.js')}"></script>
 </body>
 </html>`;
@@ -147,23 +138,24 @@ async function revealSource(uri, line) {
   }
 }
 
-function openPreview(context, inputUri) {
-  const uri = inputUri || vscode.window.activeTextEditor?.document.uri;
-  if (!isSupported(uri)) {
+async function openPreview(context, inputUri) {
+  const selected = inputUri || vscode.window.activeTextEditor?.document.uri;
+  if (!isSupported(selected)) {
     void vscode.window.showWarningMessage('Выберите файл Form.xml, Template.xml или MXL.');
     return;
   }
+  const uri = await resolveDocumentUri(selected);
   const key = normalizePath(uri);
   const previous = panels.get(key);
   if (previous) {
-    previous.panel.reveal(vscode.ViewColumn.Beside);
+    previous.panel.reveal(vscode.ViewColumn.Active);
     void sendDocument(previous);
     return;
   }
   const panel = vscode.window.createWebviewPanel(
     '1cFormViewer.preview',
     `1C: ${path.basename(uri.fsPath)}`,
-    vscode.ViewColumn.Beside,
+    vscode.ViewColumn.Active,
     {
       enableScripts: true,
       retainContextWhenHidden: true,
@@ -173,24 +165,31 @@ function openPreview(context, inputUri) {
   const panelState = { panel, uri };
   panels.set(key, panelState);
   panel.webview.html = htmlFor(panel.webview, context.extensionUri);
-  panel.webview.onDidReceiveMessage((message) => {
-    if (message?.type === 'ready' || message?.type === 'reload') {
-      void sendDocument(panelState);
-    } else if (message?.type === 'open-source') {
-      void revealSource(uri);
-    } else if (message?.type === 'select') {
-      void revealSource(uri, Number(message.line));
-    }
-  }, undefined, context.subscriptions);
-  panel.onDidDispose(() => panels.delete(key), undefined, context.subscriptions);
-
+  /* Everything below belongs to this panel, not to the extension: collecting it
+   * on context.subscriptions would keep one entry per panel ever opened alive
+   * until the window closes. */
   const watcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(path.dirname(uri.fsPath), path.basename(uri.fsPath)),
   );
-  watcher.onDidChange((changed) => {
-    if (normalizePath(changed) === key) void sendDocument(panelState);
-  }, undefined, context.subscriptions);
-  panel.onDidDispose(() => watcher.dispose(), undefined, context.subscriptions);
+  const owned = [
+    panel.webview.onDidReceiveMessage((message) => {
+      if (message?.type === 'ready' || message?.type === 'reload') {
+        void sendDocument(panelState);
+      } else if (message?.type === 'open-source') {
+        void revealSource(uri);
+      } else if (message?.type === 'select') {
+        void revealSource(uri, Number(message.line));
+      }
+    }),
+    watcher.onDidChange((changed) => {
+      if (normalizePath(changed) === key) void sendDocument(panelState);
+    }),
+    watcher,
+  ];
+  panel.onDidDispose(() => {
+    panels.delete(key);
+    for (const disposable of owned) disposable.dispose();
+  });
   void sendDocument(panelState);
 }
 
@@ -205,7 +204,7 @@ function activate(context) {
   };
   context.subscriptions.push(
     statusItem,
-    vscode.commands.registerCommand('1cFormViewer.openPreview', (uri) => openPreview(context, uri)),
+    vscode.commands.registerCommand('1cFormViewer.openPreview', (uri) => void openPreview(context, uri)),
     vscode.window.onDidChangeActiveTextEditor(updateStatusItem),
     vscode.workspace.onDidSaveTextDocument((document) => {
       const state = panels.get(normalizePath(document.uri));

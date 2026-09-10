@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # The MCP server drives a real Microsoft Edge through Playwright, and the
+    # plugin itself is Windows-only, so there is nothing to gain from Linux.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Covers the shared core, the Total Commander viewer shell, the MCP
+      # server (unit + Edge end-to-end) and the VS Code extension, and ends by
+      # checking that no generated copy of the core has drifted.
+      - run: npm test
+
+  package:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Both packs run the same prepublish path a release would, so a broken
+      # release script fails here rather than on a tag.
+      - run: npm pack --workspace=1c-form-viewer
+      - run: npx --yes @vscode/vsce package --no-dependencies
+        working-directory: packages/1c-form-viewer-vscode
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: |
+            *.tgz
+            packages/1c-form-viewer-vscode/*.vsix
+          if-no-files-found: error

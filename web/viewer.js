@@ -65,88 +65,26 @@ function writeStoredBool(key, on) {
 function isBslModule(lang) { return (lang || state.language) === 'bsl'; }
 function isBslFamily(lang) { return isBslModule(lang) || (lang || state.language) === 'bsl_query'; }
 
-/* Preview providers. When one of these claims a file the viewer shows a
- * rendered document instead of source: the outline lists the document's own
- * structure and the preview pane replaces the editor entirely, rather than
- * splitting the window with the markdown/HTML iframe.
- *
- * First match wins, so order matters — a managed form is also valid XML.
- *
- * `parser` and `viewer` are separate on purpose: an .mxl binary is decoded by
- * MxlPreview but drawn by TemplatePreview, because both produce the same
- * spreadsheet model. Adding a format means adding an entry here, not another
- * branch in every function below. */
-var PREVIEW_PROVIDERS = [
-    {
-        id: 'form',
-        parser: 'FormPreview',
-        viewer: 'FormPreview',
-        /* A form mockup stands in for the real 1C application window, so it
-         * always renders as light chrome and hides the theme toggle. */
-        lightChrome: true,
-        /* Its outline is a collapsible element tree, not a flat list. */
-        tree: true,
-        outlineTitle: 'Элементы формы',
-        sourceTitle: 'Показать форму',
-        rootCls: 'fp-root',
-        emptyCls: 'fp-empty',
-        emptyMsg: 'Это не форма 1С (нет корневого Form / logform).',
-        detect: function (content) {
-            return state.language === 'xml' && FormPreview.detect(content);
-        },
-        parse: function (content) { return FormPreview.parse(content, state.objectMeta); }
-    },
-    {
-        id: 'mxl',
-        parser: 'MxlPreview',
-        viewer: 'TemplatePreview',
-        outlineTitle: 'Области макета',
-        sourceTitle: 'Показать макет',
-        rootCls: 'tp-root',
-        emptyCls: 'tp-empty',
-        emptyMsg: 'Это не макет табличного документа 1С.',
-        /* Area ids in a spreadsheet outline are synthesised, so selection also
-         * matches on the area name and falls back to a text scan. */
-        selectMatchesByName: true,
-        selectHighlightsPreview: true,
-        detect: function (content) { return MxlPreview.detect(content); },
-        parse: function (content) { return MxlPreview.parse(content); }
-    },
-    {
-        id: 'template',
-        parser: 'TemplatePreview',
-        viewer: 'TemplatePreview',
-        outlineTitle: 'Области макета',
-        sourceTitle: 'Показать макет',
-        rootCls: 'tp-root',
-        emptyCls: 'tp-empty',
-        emptyMsg: 'Это не макет табличного документа 1С.',
-        selectMatchesByName: true,
-        selectHighlightsPreview: true,
-        detect: function (content) { return TemplatePreview.detect(content); },
-        parse: function (content) { return TemplatePreview.parse(content); }
-    }
-];
+/* Preview providers live in packages/1c-preview-core/browser/providers.js so
+ * that this viewer, the MCP agent page and the VS Code webview all claim files
+ * the same way. Everything below is the thin host-side wrapper: it supplies the
+ * source language and the owning object's metadata, which only this host has. */
+var PREVIEW_PROVIDERS = PreviewProviders.list;
 
-/* Usable only once both the module that parses for it and the module that
- * draws it are on the page. */
 function providerReady(p) {
-    return !!(p && window[p.parser] && window[p.viewer]);
+    return PreviewProviders.ready(p);
 }
 
 function detectProvider(content) {
-    for (var i = 0; i < PREVIEW_PROVIDERS.length; i++) {
-        var p = PREVIEW_PROVIDERS[i];
-        if (providerReady(p) && p.detect(content)) return p;
-    }
-    return null;
+    return PreviewProviders.detect(content, { language: state.language });
 }
 
 function providerById(id) {
-    for (var i = 0; i < PREVIEW_PROVIDERS.length; i++) {
-        if (PREVIEW_PROVIDERS[i].id === id) return PREVIEW_PROVIDERS[i];
-    }
-    return null;
+    return PreviewProviders.byId(id);
+}
+
+function parseWithProvider(p, content) {
+    return PreviewProviders.parse(p, content, { objectMeta: state.objectMeta });
 }
 
 /* The provider claiming the file currently loaded, or null for plain source. */
@@ -1171,7 +1109,7 @@ function parseDocOutline() {
     var p = currentProvider();
     if (!p || !model) return;
     var src = model.getValue();
-    var parsed = p.parse(src);
+    var parsed = parseWithProvider(p, src);
     if (!parsed || !parsed.model) return;
     allItems = window[p.viewer].outline(parsed.model, src);
 }
@@ -1770,7 +1708,7 @@ function refreshDocPreview() {
         setPreviewMode(false);
         return;
     }
-    var parsed = p.parse(src);
+    var parsed = parseWithProvider(p, src);
     if (parsed.error) {
         showPreviewMessage(host, p, parsed.error);
         return;
@@ -2849,6 +2787,7 @@ function wireUi() {
  * tests/viewer-preview.test.mjs, the way the preview modules export `_test`. */
 window.ViewerInternals = {
     providers: PREVIEW_PROVIDERS,
+    PreviewProviders: PreviewProviders,
     state: state,
     detectProvider: detectProvider,
     providerById: providerById,

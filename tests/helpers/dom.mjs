@@ -98,9 +98,18 @@ export function parseXmlDom(xml) {
   };
 }
 
-/* Loads browser-global modules from web/ into one vm sandbox, in order, and
- * hands back the sandbox window. `xml-util.js` comes first because the preview
- * modules alias its exports at load time. */
+/* Resolves a browser module to whichever of the two places owns it: the shared
+ * core (renderers, provider registry) or web/ (the Total Commander shell). The
+ * copies sync puts in web/ are generated, so tests read the core originals and
+ * a stale copy can never make a test pass. */
+export function resolveWebModule(root, file) {
+  const core = path.join(root, 'packages', '1c-preview-core', 'browser', file);
+  return fs.existsSync(core) ? core : path.join(root, 'web', file);
+}
+
+/* Loads browser-global modules into one vm sandbox, in order, and hands back
+ * the sandbox window. `xml-util.js` comes first because the preview modules
+ * alias its exports at load time. */
 export function loadWebModules(root, files, extra = {}) {
   const sandbox = {
     navigator: { language: 'ru-RU' },
@@ -114,7 +123,7 @@ export function loadWebModules(root, files, extra = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   for (const file of files) {
-    vm.runInContext(fs.readFileSync(path.join(root, 'web', file), 'utf8'), sandbox);
+    vm.runInContext(fs.readFileSync(resolveWebModule(root, file), 'utf8'), sandbox);
   }
   return sandbox;
 }

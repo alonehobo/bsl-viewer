@@ -1,0 +1,18 @@
+{
+  "comment": "The single list of shared preview assets. Every host build reads this file; nothing else may hardcode these names. `scripts` is a load order, not a set: xml-util.js has to come first because the renderers alias its exports at load time.",
+  "scripts": [
+    "xml-util.js",
+    "form-preview.js",
+    "template-preview.js",
+    "mxl-preview.js",
+    "providers.js"
+  ],
+  "styles": [
+    "viewer.css"
+  ],
+  "sprite": "icons.svg",
+  "node": [
+    "document.cjs",
+    "document.d.cts"
+  ]
+}

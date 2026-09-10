@@ -156,7 +156,10 @@ C++ (`bslcommon.cpp`): определение кодировки, побайто
 tools\run-tests.bat
 ```
 
-JS (`web/form-preview.js`, `web/template-preview.js`, `web/mxl-preview.js`, скрипт памяти проекта): рендер предпросмотра форм и макетов 1С, `scripts/memory-gate.mjs`.
+JS: рендереры форм и макетов 1С из `packages/1c-preview-core`, оболочка просмотрщика
+`web/viewer.js`, MCP-сервер, расширение VS Code и `scripts/memory-gate.mjs`. Один
+прогон покрывает все продукты сразу и в конце проверяет, что сгенерированные копии
+ядра нигде не разошлись с оригиналом.
 
 ```bash
 npm test
@@ -171,6 +174,38 @@ powershell -File tools\bench-plugin.ps1
 Прогоняет `.wlx64` через `tools\wlxhost.cpp` — минимальную замену Lister'а — и
 измеряет задержку до отрисовки после `ListLoad`.
 
+### Релизы
+
+Каждый продукт выпускается отдельно, но собирается из одного ядра.
+
+| Продукт | Версия | Команда |
+|---------|--------|---------|
+| MCP-сервер | `packages/1c-form-viewer/package.json` | `npm pack --workspace=1c-form-viewer` |
+| Portable / compact / native MCP | там же | `npm run build:native --workspace=1c-form-viewer` |
+| Расширение VS Code | `packages/1c-form-viewer-vscode/package.json` | `npx @vscode/vsce package` в каталоге пакета |
+| Плагин и BSLEdit | `BSLView.ini`, `app.rc` | `build.bat` |
+
+Версия задаётся только в `package.json` продукта: CLI, `--help` и
+MCP-рукопожатие читают её оттуда. Перед упаковкой обе npm-сборки прогоняют
+синхронизацию ядра и проверку копий, поэтому выпустить пакет со сборкой
+устаревших рендереров нельзя.
+
+### Общая база
+
+Рендереры форм и макетов, реестр форматов и правила чтения файлов 1С лежат в
+`packages/1c-preview-core` и используются всеми продуктами сразу: плагином Total
+Commander, BSLEdit, MCP-сервером и расширением VS Code.
+
+Копии ядра в `web/`, `packages/1c-form-viewer-vscode/media/` и рядом с ними —
+сгенерированные и в git не хранятся. Правьте ядро, а не копию:
+
+```bash
+npm run sync
+```
+
+`npm run verify` (и хвост `npm test`) падает, если копия разошлась с ядром.
+`build.bat` вызывает синхронизацию сам, когда `web/` пустой.
+
 ### Структура проекта
 
 | Файл | Описание |
@@ -179,11 +214,14 @@ powershell -File tools\bench-plugin.ps1
 | `bsledit.cpp` | Точка входа BSLEdit.exe |
 | `bslcommon.cpp/h` | Чтение/запись файлов с сохранением кодировки, JSON-экранирование |
 | `webview2host.cpp/h` | Обертка над WebView2: общее окружение, пул прогретых экземпляров |
-| `web/viewer.html/css/js` | Интерфейс редактора: Monaco, токенизатор BSL, панель структуры |
-| `web/form-preview.js` | Разбор и визуальный макет управляемых форм 1С (`Form.xml`) |
-| `web/template-preview.js` | Сетка макета табличного документа (`Template.xml`) |
-| `web/mxl-preview.js` | Разбор `.mxl` (MXL8) в ту же модель сетки |
+| `web/viewer.html/js` | Интерфейс редактора: Monaco, токенизатор BSL, панель структуры |
 | `web/vs/` | Monaco Editor (скачивается, не хранится в репозитории) |
+| `packages/1c-preview-core/` | Общая база: рендереры, реестр форматов, разбор файлов 1С |
+| `packages/1c-preview-core/browser/form-preview.js` | Разбор и визуальный макет управляемых форм 1С (`Form.xml`) |
+| `packages/1c-preview-core/browser/template-preview.js` | Сетка макета табличного документа (`Template.xml`) |
+| `packages/1c-preview-core/browser/mxl-preview.js` | Разбор `.mxl` (MXL8) в ту же модель сетки |
+| `packages/1c-form-viewer/` | MCP-сервер `1c-form-viewer` |
+| `packages/1c-form-viewer-vscode/` | Расширение VS Code |
 | `browserhost.cpp/h` | Обертка над IE WebBrowser (fallback) |
 | `bslhighlight.cpp/h` | C++ подсветчик BSL для IE fallback |
 | `BSLView.ini` | Конфигурация плагина |

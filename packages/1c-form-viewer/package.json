@@ -29,12 +29,13 @@
   },
   "files": [
     "dist/",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "clean": "node scripts/clean.mjs",
-    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "build": "npm run sync && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
     "build:compact": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-compact.ps1",
     "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1",
@@ -42,8 +43,9 @@
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "tsx --test tests/config.test.ts tests/files.test.ts tests/mcp-contract.test.ts tests/static-server.test.ts",
     "test:e2e": "tsx --test tests/browser.e2e.test.ts",
-    "verify:assets": "node scripts/verify-assets.mjs",
-    "prepack": "npm run clean && npm run build && npm run verify:assets"
+    "verify:assets": "node ../1c-preview-core/scripts/verify.mjs && node scripts/verify-assets.mjs",
+    "prepack": "npm run clean && npm run build && npm run verify:assets",
+    "sync": "node ../1c-preview-core/scripts/sync.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
@@ -51,6 +53,7 @@
     "zod": "^4.1.0"
   },
   "devDependencies": {
+    "1c-preview-core": "*",
     "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^24.0.0",
     "tsx": "^4.20.0",

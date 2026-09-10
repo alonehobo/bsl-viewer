@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ViewerOptions } from './types.js';
+import { SERVER_NAME, VERSION } from './version.js';
 
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 const DEFAULT_VIEWPORT = { width: 1440, height: 900 };
@@ -79,7 +80,7 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): CliConfig {
   };
 }
 
-export const HELP = `1c-form-viewer 0.1.0
+export const HELP = `${SERVER_NAME} ${VERSION}
 
 Usage:
   1c-form-viewer --stdio [--root <path>... | --allow-any-path]
@@ -91,8 +92,8 @@ Options:
   --root <path>         Allow read-only access below this directory (repeatable).
   --allow-any-path      Allow absolute paths anywhere on this machine (read-only).
   --viewport <WxH>      Browser viewport, default 1440x900.
-  --headless             Hide the Edge window (intended for CI).
+  --headless            Hide the Edge window (intended for CI).
   --max-bytes <number>  Maximum source file size, default 67108864.
-  --help                 Show this help.
-  --version              Show the package version.
+  --help                Show this help.
+  --version             Show the package version.
 `;

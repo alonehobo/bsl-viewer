@@ -20,6 +20,17 @@ if not exist "%WV2SDK%\include\WebView2.h" (
     exit /b 1
 )
 
+rem web\ carries generated copies of packages\1c-preview-core, which are not in
+rem git. Sync them before compiling so a fresh clone builds a complete plugin.
+if not exist "%SRC%\web\form-preview.js" (
+    echo Shared preview assets missing, syncing from packages\1c-preview-core...
+    call node "%SRC%\packages\1c-preview-core\scripts\sync.mjs"
+    if errorlevel 1 (
+        echo FAILED: could not sync packages\1c-preview-core ^(is Node.js installed?^)
+        exit /b 1
+    )
+)
+
 if not exist "%SRC%\web\vs\loader.js" (
     echo Monaco assets missing, fetching...
     powershell -NoProfile -ExecutionPolicy Bypass -File "%SRC%\tools\fetch-monaco.ps1"

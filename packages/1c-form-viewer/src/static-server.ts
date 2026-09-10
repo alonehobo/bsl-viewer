@@ -61,7 +61,10 @@ export class StaticAssetServer {
           }));
           return;
         }
-        const candidate = path.resolve(root, relative);
+        /* Resolve symlinks before the containment check: `root` is already a
+         * realpath, so comparing a merely-resolved path would let a link
+         * inside the assets directory serve a file outside it. */
+        const candidate = await fs.realpath(path.resolve(root, relative));
         if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
           response.writeHead(403).end();
           return;

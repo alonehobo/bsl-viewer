@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ViewerController } from './controller.js';
+import { SERVER_NAME, VERSION } from './version.js';
 
 type ToolPayload = object;
 
@@ -54,7 +55,7 @@ const annotations = {
 
 export function createMcpServer(controller: ViewerController): McpServer {
   const server = new McpServer(
-    { name: '1c-form-viewer', version: '0.1.0' },
+    { name: SERVER_NAME, version: VERSION },
     {
       instructions: 'Read-only visual inspection of 1C Form.xml, Template.xml and MXL files. When the user provides a filesystem path, call open_preview with that path. If an internal browser is available, call get_preview_url after opening. Open a preview before using navigation tools.',
     },

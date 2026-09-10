@@ -45,32 +45,28 @@
     }
   }
 
+  /* Which module claims a file, and which one draws it, comes from the shared
+   * registry in packages/1c-preview-core/browser/providers.js, so this webview
+   * recognises exactly what the Total Commander viewer and the MCP server do. */
   function loadDocument(payload) {
     message.hidden = true;
     name.textContent = payload.name || 'Документ';
-    kind.textContent = payload.encoding ? `(${payload.encoding})` : '';
+    kind.textContent = '';
     preview.innerHTML = '';
     active = null;
-    let result;
     try {
-      if (FormPreview.detect(payload.content)) {
-        result = FormPreview.parse(payload.content, payload.objectMeta || '');
-        active = { viewer: FormPreview, kind: 'Форма 1С' };
-      } else if (MxlPreview.detect(payload.content)) {
-        result = MxlPreview.parse(payload.content);
-        active = { viewer: TemplatePreview, kind: 'MXL' };
-      } else if (TemplatePreview.detect(payload.content)) {
-        result = TemplatePreview.parse(payload.content);
-        active = { viewer: TemplatePreview, kind: 'Template.xml' };
-      } else {
-        showError('Файл не распознан как форма 1С, Template.xml или MXL.');
+      const entry = PreviewProviders.detect(payload.content, {});
+      if (!entry) {
+        showError(PreviewProviders.unsupportedMessage);
         return;
       }
+      const result = PreviewProviders.parse(entry, payload.content, { objectMeta: payload.objectMeta });
       if (!result || result.error || !result.model) {
         showError((result && result.error) || 'Не удалось построить модель документа.');
         return;
       }
-      kind.textContent = active.kind;
+      active = { viewer: PreviewProviders.view(entry), kind: entry.label };
+      kind.textContent = payload.encoding ? `${entry.label} · ${payload.encoding}` : entry.label;
       active.viewer.render(result.model, preview, {
         onSelect: function (selected) {
           if (!selected || !selected.id) return;

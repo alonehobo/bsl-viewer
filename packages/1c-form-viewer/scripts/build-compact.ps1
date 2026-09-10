@@ -29,15 +29,8 @@ Copy-Item -LiteralPath (Join-Path $packageRoot 'LICENSE') -Destination $app
 Copy-Item -LiteralPath (Join-Path $packageRoot 'native\install.ps1') -Destination $Output
 Copy-Item -LiteralPath (Join-Path $packageRoot 'native\COMPACT-README.md') -Destination (Join-Path $Output 'README.md')
 
-$msvc = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207'
-$windowsKit = 'C:\Program Files (x86)\Windows Kits\10'
-$sdkVersion = '10.0.26100.0'
-$cl = Join-Path $msvc 'bin\Hostx64\x64\cl.exe'
-if (-not (Test-Path -LiteralPath $cl)) { throw "MSVC compiler not found: $cl" }
-
-$env:Path = "$(Join-Path $msvc 'bin\Hostx64\x64');$env:Path"
-$env:INCLUDE = "$(Join-Path $msvc 'include');$(Join-Path $windowsKit "Include\$sdkVersion\ucrt");$(Join-Path $windowsKit "Include\$sdkVersion\um");$(Join-Path $windowsKit "Include\$sdkVersion\shared")"
-$env:LIB = "$(Join-Path $msvc 'lib\x64');$(Join-Path $windowsKit "Lib\$sdkVersion\ucrt\x64");$(Join-Path $windowsKit "Lib\$sdkVersion\um\x64")"
+. "$PSScriptRoot/msvc-env.ps1"
+$cl = Initialize-MsvcEnvironment
 
 Push-Location $Output
 try {

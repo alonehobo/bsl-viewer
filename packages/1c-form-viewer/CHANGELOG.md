@@ -1,0 +1,28 @@
+# Changelog
+
+Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
+версии — [SemVer](https://semver.org/lang/ru/).
+
+## [Unreleased]
+
+### Changed
+- Рендереры форм и макетов переехали в общий пакет `1c-preview-core`; сервер
+  собирает `dist/web` из него по единому манифесту, а не из каталога плагина
+  Total Commander. Спрайт иконок берётся из `icons.svg`, а не выдирается
+  регэкспом из `web/viewer.html`.
+- Правила чтения файлов 1С (кодировки, дескрипторы форм, метаданные объекта)
+  общие с расширением VS Code — один и тот же файл открывается одинаково.
+- Версия сервера берётся из `package.json`: `--version`, `--help` и
+  MCP-рукопожатие больше не расходятся между собой.
+- Сборочные скрипты ищут MSVC и Windows SDK через `vswhere`, а не по
+  прибитому пути к конкретной версии тулчейна.
+
+## [0.1.0] - 2026-09-10
+
+### Added
+- Первый выпуск: STDIO MCP-сервер read-only просмотра `Form.xml`,
+  `Template.xml` и `.mxl` в отдельном окне Microsoft Edge.
+- Инструменты `open_preview`, `get_preview_url`, `reload_preview`,
+  `inspect_preview`, `switch_tab`, `select_element`, `scroll_preview`,
+  `capture_preview`, `close_preview`.
+- Ограничение доступа через `--root` и явный `--allow-any-path`.

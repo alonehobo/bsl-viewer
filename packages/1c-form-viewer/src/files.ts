@@ -1,6 +1,19 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import {
+  decodeText,
+  formLayoutFor,
+  objectMetaCandidates,
+  OBJECT_META_MARKER,
+  SUPPORTED_EXTENSIONS,
+} from './core/document.cjs';
 import type { LoadedDocument } from './types.js';
+
+/* The 1C-specific rules — encodings, form descriptors, object metadata — live
+ * in packages/1c-preview-core so this server and the VS Code extension resolve
+ * the same file the same way. What stays here is this server's own access
+ * policy: allow-roots, realpath canonicalisation and the size limit. */
+export { decodeText };
 
 export class FileAccessError extends Error {
   constructor(message: string) {
@@ -82,32 +95,14 @@ export class FileLoader {
   }
 
   private async maybeResolveFormDescriptor(canonicalPath: string): Promise<string> {
-    if (path.extname(canonicalPath).toLowerCase() !== '.xml') return canonicalPath;
-    if (path.basename(path.dirname(canonicalPath)).toLowerCase() !== 'forms') return canonicalPath;
-    const name = path.basename(canonicalPath, path.extname(canonicalPath));
-    const layout = path.join(path.dirname(canonicalPath), name, 'Ext', 'Form.xml');
+    const layout = formLayoutFor(canonicalPath);
+    if (!layout) return canonicalPath;
     try {
       return await this.canonicalFile(layout);
     } catch (error) {
       if (error instanceof FileAccessError && error.message.startsWith('File does not exist:')) return canonicalPath;
       throw error;
     }
-  }
-
-  private objectMetaCandidates(formPath: string): string[] {
-    if (path.basename(formPath).toLowerCase() !== 'form.xml') return [];
-    const extDir = path.dirname(formPath);
-    if (path.basename(extDir).toLowerCase() !== 'ext') return [];
-    const formDir = path.dirname(extDir);
-    const formsDir = path.dirname(formDir);
-    if (path.basename(formsDir).toLowerCase() !== 'forms') return [];
-    const objectDir = path.dirname(formsDir);
-    const objectName = path.basename(objectDir);
-    if (!objectName) return [];
-    return [
-      path.join(path.dirname(objectDir), `${objectName}.xml`),
-      path.join(objectDir, `${objectName}.xml`),
-    ];
   }
 
   private async readCanonical(filePath: string): Promise<{ content: string; encoding: LoadedDocument['encoding']; size: number }> {
@@ -122,12 +117,12 @@ export class FileLoader {
   }
 
   private async loadObjectMeta(formPath: string): Promise<string> {
-    for (const candidate of this.objectMetaCandidates(formPath)) {
+    for (const candidate of objectMetaCandidates(formPath)) {
       try {
         const canonical = await this.canonicalFile(candidate);
         if (normalizeForComparison(canonical) === normalizeForComparison(formPath)) continue;
         const { content } = await this.readCanonical(canonical);
-        if (content.includes('MetaDataObject')) return content;
+        if (content.includes(OBJECT_META_MARKER)) return content;
       } catch (error) {
         if (error instanceof FileAccessError) continue;
         throw error;
@@ -142,7 +137,7 @@ export class FileLoader {
     const resolvedPath = await this.maybeResolveFormDescriptor(initial);
     const { content, encoding, size } = await this.readCanonical(resolvedPath);
     const extension = path.extname(resolvedPath).toLowerCase();
-    if (extension !== '.xml' && extension !== '.mxl') {
+    if (!SUPPORTED_EXTENSIONS.includes(extension)) {
       throw new FileAccessError(`Unsupported file extension: ${extension || '(none)'}`);
     }
     return {
@@ -154,28 +149,5 @@ export class FileLoader {
       size,
       extension,
     };
-  }
-}
-
-export function decodeText(bytes: Uint8Array): { content: string; encoding: LoadedDocument['encoding'] } {
-  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
-    return { content: new TextDecoder('utf-8').decode(bytes.subarray(3)), encoding: 'utf8-bom' };
-  }
-  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
-    return { content: new TextDecoder('utf-16le').decode(bytes.subarray(2)), encoding: 'utf16le' };
-  }
-  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
-    const body = bytes.subarray(2);
-    const swapped = new Uint8Array(body.length - (body.length % 2));
-    for (let i = 0; i < swapped.length; i += 2) {
-      swapped[i] = body[i + 1];
-      swapped[i + 1] = body[i];
-    }
-    return { content: new TextDecoder('utf-16le').decode(swapped), encoding: 'utf16be' };
-  }
-  try {
-    return { content: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: 'utf8' };
-  } catch {
-    return { content: new TextDecoder('windows-1251').decode(bytes), encoding: 'windows-1251' };
   }
 }
