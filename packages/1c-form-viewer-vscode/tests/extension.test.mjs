@@ -88,6 +88,14 @@ test('packaging rebuilds the shared assets first', async () => {
   assert.match(manifest.scripts.build, /build-native\.ps1/);
 });
 
+test('the Marketplace README includes the preview-button screenshot', async () => {
+  const readme = await read('README.md');
+  assert.match(readme, /images\/open-preview-button\.png/);
+  await access(path.join(pkgDir, 'images', 'open-preview-button.png'));
+  const ignore = await read('.vscodeignore');
+  assert.match(ignore, /!images\/\*\*/);
+});
+
 test('the webview loads exactly the shared assets, in the core load order', async () => {
   const assets = JSON.parse(await read('media', 'assets.json'));
   assert.deepEqual(assets.scripts, scripts);

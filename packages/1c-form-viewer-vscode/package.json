@@ -2,7 +2,7 @@
   "name": "1c-form-viewer-vscode",
   "displayName": "1C Form Viewer",
   "description": "Visual preview of 1C managed forms, spreadsheet templates and MXL files in VS Code",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "alonehobo",
   "author": {
     "name": "Sergey Martemyanov",

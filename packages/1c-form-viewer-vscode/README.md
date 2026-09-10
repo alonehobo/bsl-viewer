@@ -23,6 +23,8 @@ code --install-extension alonehobo.1c-form-viewer-vscode
 справа внизу и, если хватает места, в заголовке редактора. Также остаются
 Command Palette и контекстное меню файла.
 
+![Кнопка открытия визуального preview формы](images/open-preview-button.png)
+
 ## Использование
 
 1. Откройте `.xml` или `.mxl` в VS Code.
