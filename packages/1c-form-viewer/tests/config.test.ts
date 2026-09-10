@@ -13,7 +13,13 @@ test('CLI parses repeated roots and viewer options', () => {
   assert.equal(config.headless, true);
   assert.deepEqual(config.viewport, { width: 1280, height: 720 });
   assert.equal(config.maxBytes, 1024);
+  assert.equal(config.allowAnyPath, false);
   assert.deepEqual(config.roots, [path.resolve(cwd, 'one'), path.resolve(cwd, 'two')]);
+});
+
+test('CLI enables explicit unrestricted read-only path mode', () => {
+  const config = parseCliArgs(['--stdio', '--allow-any-path']);
+  assert.equal(config.allowAnyPath, true);
 });
 
 test('CLI defaults the allowed root to cwd', () => {
@@ -27,4 +33,3 @@ test('viewport and numeric validation reject malformed values', () => {
   assert.throws(() => parseCliArgs(['--max-bytes', '0']), /positive integer/);
   assert.throws(() => parseCliArgs(['--wat']), /Unknown option/);
 });
-

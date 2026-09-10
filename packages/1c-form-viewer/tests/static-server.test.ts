@@ -24,3 +24,29 @@ test('asset server binds loopback, serves only tokenized static files and disabl
   assert.equal(denied.status, 404);
 });
 
+test('asset server exposes only the current preview to the tokenized internal URL', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), '1c-form-assets-state-'));
+  const server = new StaticAssetServer(root);
+  t.after(async () => {
+    await server.close();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  await fs.writeFile(path.join(root, 'index.html'), '<!doctype html><title>ok</title>');
+  const url = await server.start();
+  const before = await fetch(new URL('state.json', url));
+  assert.equal(before.status, 404);
+  server.setDocument({ resolvedPath: 'C:\\root\\Form.xml', content: '<Form/>', objectMeta: '' });
+  const internalUrl = server.internalUrl();
+  const internal = await fetch(internalUrl);
+  assert.match(internal.url, /[?&]internal=1/);
+  const state = await fetch(new URL('state.json', internalUrl));
+  assert.equal(state.status, 200);
+  assert.deepEqual(await state.json(), {
+    revision: 1,
+    path: 'C:\\root\\Form.xml',
+    content: '<Form/>',
+    objectMeta: '',
+  });
+  const meta = await fetch(new URL('state-meta.json', internalUrl));
+  assert.deepEqual(await meta.json(), { revision: 1, available: true });
+});

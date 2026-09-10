@@ -18,6 +18,7 @@ const maxBytes = 64 * 1024 * 1024;
 function options(root: string) {
   return {
     roots: [root],
+    allowAnyPath: false,
     viewport: { width: 640, height: 480 },
     headless: true,
     maxBytes,
@@ -69,6 +70,13 @@ test('one Edge page handles nested tabs, hidden selection, scrolling and reload'
   const opened = await controller.open(formPath);
   assert.equal(opened.state.format, 'form');
   assert.equal(opened.state.tabs.find((tab) => tab.pageId === '101')?.active, true);
+  const context = (browser as unknown as { context: { newPage: () => Promise<any> } }).context;
+  const internalPage = await context.newPage();
+  await internalPage.setViewportSize({ width: 640, height: 480 });
+  await internalPage.goto(browser.previewUrl(), { waitUntil: 'load' });
+  await internalPage.waitForFunction(() => !document.getElementById('preview')?.hasAttribute('hidden'));
+  assert.match(await internalPage.locator('#agent-format').textContent() || '', /Форма 1С/);
+  assert.match(await internalPage.locator('#agent-path').textContent() || '', /Nested\.xml/);
   const originalPage = (browser as unknown as { page: unknown }).page;
 
   const selected = await controller.selectElement('140') as { found: boolean; state: { tabs: Array<Record<string, unknown>> } };
@@ -134,7 +142,7 @@ test('built CLI serves the tools over STDIO and shuts its Edge process down', as
   t.after(() => client.close());
   await client.connect(transport);
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 8);
+  assert.equal(tools.tools.length, 9);
   const opened = await client.callTool({
     name: 'open_preview',
     arguments: { path: path.join(repositoryDir, 'testdata', 'Форма.xml') },

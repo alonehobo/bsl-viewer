@@ -51,3 +51,8 @@ testdata/scroll-test/
 
 # Other local tool files
 /opencode.json
+
+# Build outputs of the packaged products
+artifacts/
+*.vsix
+packages/1c-form-viewer-vscode/media/

@@ -2,6 +2,17 @@
   "name": "1c-form-viewer",
   "version": "0.1.0",
   "description": "Read-only MCP server for visually inspecting 1C managed forms and spreadsheet templates",
+  "author": {
+    "name": "Sergey Martemyanov",
+    "email": "sergey.martemyanov@gmail.com",
+    "url": "https://github.com/alonehobo"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alonehobo/bsl-viewer.git",
+    "directory": "packages/1c-form-viewer"
+  },
+  "homepage": "https://github.com/alonehobo/bsl-viewer/tree/main/packages/1c-form-viewer",
   "type": "module",
   "license": "MIT",
   "publishConfig": {
@@ -24,9 +35,13 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-portable.ps1",
+    "build:compact": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-compact.ps1",
+    "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-native.ps1",
     "pretest": "npm run build",
-    "test": "tsx --test tests/*.test.ts",
-    "test:e2e": "tsx --test tests/*.e2e.test.ts",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "tsx --test tests/config.test.ts tests/files.test.ts tests/mcp-contract.test.ts tests/static-server.test.ts",
+    "test:e2e": "tsx --test tests/browser.e2e.test.ts",
     "verify:assets": "node scripts/verify-assets.mjs",
     "prepack": "npm run clean && npm run build && npm run verify:assets"
   },

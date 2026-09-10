@@ -34,6 +34,7 @@ class FakeController {
   async scroll() { this.requireOpen(); return { state }; }
   async capture() { this.requireOpen(); return png; }
   async screenshot() { this.requireOpen(); return png; }
+  async previewUrl() { this.requireOpen(); return { previewUrl: 'http://127.0.0.1:1234/token/index.html?internal=1', externalEdge: true }; }
   async close() { this.opened = false; return { closed: true as const }; }
 }
 
@@ -51,7 +52,7 @@ test('advertises all tool schemas and read-only annotations', async (t) => {
   t.after(async () => { await client.close(); await server.close(); });
   const listed = await client.listTools();
   assert.deepEqual(listed.tools.map((tool) => tool.name), [
-    'open_preview', 'reload_preview', 'inspect_preview', 'switch_tab',
+    'open_preview', 'get_preview_url', 'reload_preview', 'inspect_preview', 'switch_tab',
     'select_element', 'scroll_preview', 'capture_preview', 'close_preview',
   ]);
   for (const tool of listed.tools) {
@@ -76,6 +77,17 @@ test('visual navigation results contain structured text and PNG blocks', async (
   assert.equal((opened.structuredContent as { state: { format: string } }).state.format, 'form');
 });
 
+test('internal preview URL keeps the external Edge session available', async (t) => {
+  const { client, server } = await connected();
+  t.after(async () => { await client.close(); await server.close(); });
+  await client.callTool({ name: 'open_preview', arguments: { path: 'Form.xml' } });
+  const result = await client.callTool({ name: 'get_preview_url', arguments: {} });
+  assert.equal(result.isError, undefined);
+  const payload = JSON.parse((result.content[0] as { text: string }).text) as { previewUrl: string; externalEdge: boolean };
+  assert.match(payload.previewUrl, /^http:\/\/127\.0\.0\.1:\d+\/[^/]+\/index\.html\?internal=1$/);
+  assert.equal(payload.externalEdge, true);
+});
+
 test('tool failures are returned as MCP errors for missing sessions and ambiguous page IDs', async (t) => {
   const { client, server } = await connected();
   t.after(async () => { await client.close(); await server.close(); });
@@ -88,4 +100,3 @@ test('tool failures are returned as MCP errors for missing sessions and ambiguou
   assert.equal(ambiguous.isError, true);
   assert.match((ambiguous.content[0] as { text: string }).text, /ambiguous/);
 });
-

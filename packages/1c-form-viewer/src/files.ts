@@ -27,9 +27,15 @@ export class FileLoader {
     private readonly requestedRoots: string[],
     private readonly maxBytes: number,
     private readonly cwd: string,
+    private readonly allowAnyPath: boolean,
   ) {}
 
-  static async create(roots: string[], maxBytes: number, cwd = process.cwd()): Promise<FileLoader> {
+  static async create(
+    roots: string[],
+    maxBytes: number,
+    cwd = process.cwd(),
+    allowAnyPath = false,
+  ): Promise<FileLoader> {
     const canonicalRoots: string[] = [];
     const requestedRoots: string[] = [];
     for (const root of roots) {
@@ -42,7 +48,7 @@ export class FileLoader {
       canonicalRoots.push(canonical);
       requestedRoots.push(requested);
     }
-    return new FileLoader(canonicalRoots, requestedRoots, maxBytes, cwd);
+    return new FileLoader(canonicalRoots, requestedRoots, maxBytes, cwd, allowAnyPath);
   }
 
   allowedRoots(): string[] {
@@ -50,12 +56,14 @@ export class FileLoader {
   }
 
   private assertAllowed(candidate: string): void {
+    if (this.allowAnyPath) return;
     if (!this.roots.some((root) => isInside(root, candidate))) {
       throw new FileAccessError(`Path is outside the allowed roots: ${candidate}`);
     }
   }
 
   private assertRequestedAllowed(candidate: string): void {
+    if (this.allowAnyPath) return;
     if (![...this.requestedRoots, ...this.roots].some((root) => isInside(root, candidate))) {
       throw new FileAccessError(`Path is outside the allowed roots: ${candidate}`);
     }

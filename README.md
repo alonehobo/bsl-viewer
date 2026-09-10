@@ -26,6 +26,24 @@ WLX-плагин для Total Commander, обеспечивающий просм
 - 32-bit и 64-bit версии
 - Fallback на C++ подсветчик через IE при отсутствии WebView2
 
+## 1C Form Viewer для VS Code
+
+В `packages/1c-form-viewer-vscode` добавлено отдельное расширение для
+визуального просмотра `Form.xml`, `Template.xml` и MXL рядом с исходником.
+Команда **1C: Open Visual Preview** доступна из Command Palette и контекстного
+меню XML/MXL. Дерево структуры позволяет выбрать элемент и перейти к его строке
+в исходнике; после сохранения preview обновляется автоматически.
+
+Расширение использует общие renderer-ы из `web/` и не требует запуска MCP:
+
+```powershell
+npm run build:vscode
+npm test
+```
+
+Подробности локальной разработки находятся в
+`packages/1c-form-viewer-vscode/README.md`.
+
 ## BSLEdit - автономный редактор
 
 В комплекте идет **BSLEdit.exe** — автономный редактор BSL файлов на базе Monaco Editor:

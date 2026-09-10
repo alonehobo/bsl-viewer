@@ -78,3 +78,13 @@ test('opens a form when optional object metadata is outside the allowed root', a
   const loaded = await loader.load(actual);
   assert.equal(loaded.objectMeta, '');
 });
+
+test('explicit unrestricted mode loads an absolute path outside configured roots', async (t) => {
+  const base = await sandbox();
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const outside = path.join(base, 'AnyForm.xml');
+  await fs.writeFile(outside, '<Form xmlns="http://v8.1c.ru/8.3/xcf/logform"/>');
+  const loader = await FileLoader.create([], 1024, process.cwd(), true);
+  const loaded = await loader.load(outside);
+  assert.equal(loaded.resolvedPath, await fs.realpath(outside));
+});

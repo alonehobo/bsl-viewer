@@ -81,6 +81,13 @@ export class ViewerController {
     return this.exclusive(() => this.browser.capture('viewport'));
   }
 
+  previewUrl() {
+    return this.exclusive(async () => ({
+      previewUrl: this.browser.previewUrl(),
+      externalEdge: true,
+    }));
+  }
+
   close(): Promise<{ closed: true }> {
     return this.exclusive(async () => {
       await this.browser.close();
@@ -89,4 +96,3 @@ export class ViewerController {
     });
   }
 }
-

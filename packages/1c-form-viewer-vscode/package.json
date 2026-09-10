@@ -1,0 +1,72 @@
+{
+  "name": "1c-form-viewer-vscode",
+  "displayName": "1C Form Viewer",
+  "description": "Visual preview of 1C managed forms, spreadsheet templates and MXL files in VS Code",
+  "version": "0.1.4",
+  "publisher": "alonehobo",
+  "author": {
+    "name": "Sergey Martemyanov",
+    "email": "sergey.martemyanov@gmail.com",
+    "url": "https://github.com/alonehobo"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alonehobo/bsl-viewer.git",
+    "directory": "packages/1c-form-viewer-vscode"
+  },
+  "homepage": "https://github.com/alonehobo/bsl-viewer/tree/main/packages/1c-form-viewer-vscode",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:1cFormViewer.openPreview"
+  ],
+  "main": "extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "1cFormViewer.openPreview",
+        "title": "1C: Open Visual Preview",
+        "icon": "$(preview)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "1cFormViewer.openPreview",
+          "when": "true"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "1cFormViewer.openPreview",
+          "when": "resourceExtname == .xml || resourceExtname == .mxl",
+          "group": "navigation@80"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "1cFormViewer.openPreview",
+          "when": "resourceExtname == .xml || resourceExtname == .mxl",
+          "group": "navigation@80"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "1cFormViewer.openPreview",
+          "when": "resourceFilename =~ /\\.(xml|mxl)$/i",
+          "group": "navigation@1"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/copy-assets.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "prepack": "npm run build"
+  }
+}

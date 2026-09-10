@@ -56,16 +56,23 @@ export function createMcpServer(controller: ViewerController): McpServer {
   const server = new McpServer(
     { name: '1c-form-viewer', version: '0.1.0' },
     {
-      instructions: 'Read-only visual inspection of 1C Form.xml, Template.xml and MXL files. Open a preview before using navigation tools.',
+      instructions: 'Read-only visual inspection of 1C Form.xml, Template.xml and MXL files. When the user provides a filesystem path, call open_preview with that path. If an internal browser is available, call get_preview_url after opening. Open a preview before using navigation tools.',
     },
   );
 
   server.registerTool('open_preview', {
     title: 'Open 1C preview',
     description: 'Open a Form.xml, Template.xml or MXL file in the shared Microsoft Edge preview window.',
-    inputSchema: z.object({ path: z.string().min(1).describe('File path below an allowed --root directory.') }),
+    inputSchema: z.object({ path: z.string().min(1).describe('Absolute or relative path to Form.xml, Template.xml or MXL. The path must be below --root, unless the server was started with --allow-any-path.') }),
     annotations,
   }, guarded(async ({ path }) => visualResult(controller, await controller.open(path))));
+
+  server.registerTool('get_preview_url', {
+    title: 'Get internal preview URL',
+    description: 'Return a loopback URL for opening the current preview in the MCP client\'s internal browser. The separate Microsoft Edge preview remains active.',
+    inputSchema: z.object({}),
+    annotations,
+  }, guarded(async () => textResult(await controller.previewUrl())));
 
   server.registerTool('reload_preview', {
     title: 'Reload 1C preview',

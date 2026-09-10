@@ -276,6 +276,55 @@ function elementSelector(id) {
     return '[data-id="' + String(id).replace(/["\\]/g, '\\$&') + '"]';
 }
 
+function captureNode(node) {
+    if (!node) fail('Capture target is not available.');
+    var rect = node.getBoundingClientRect();
+    var width = Math.max(1, Math.ceil(node === document.documentElement || node === document.body ? document.documentElement.clientWidth : rect.width));
+    var height = Math.max(1, Math.ceil(node === document.documentElement || node === document.body ? document.documentElement.clientHeight : rect.height));
+    var clone = node.cloneNode(true);
+    var allOriginal = [node].concat(Array.prototype.slice.call(node.querySelectorAll('*')));
+    var allClone = [clone].concat(Array.prototype.slice.call(clone.querySelectorAll('*')));
+    for (var i = 0; i < allOriginal.length && i < allClone.length; i++) {
+        var computed = getComputedStyle(allOriginal[i]);
+        for (var j = 0; j < computed.length; j++) {
+            var property = computed[j];
+            allClone[i].style.setProperty(property, computed.getPropertyValue(property), computed.getPropertyPriority(property));
+        }
+    }
+    var wrapper = document.createElement('div');
+    wrapper.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    wrapper.style.cssText = 'width:' + width + 'px;height:' + height + 'px;overflow:hidden;background:' + getComputedStyle(document.body).backgroundColor + ';';
+    if (node === document.documentElement || node === document.body) {
+        while (clone.firstChild) wrapper.appendChild(clone.firstChild);
+    } else {
+        wrapper.appendChild(clone);
+    }
+    var markup = new XMLSerializer().serializeToString(wrapper);
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '"><foreignObject width="100%" height="100%">' + markup + '</foreignObject></svg>';
+    return new Promise(function (resolve, reject) {
+        var image = new Image();
+        image.onload = function () {
+            var canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            var context = canvas.getContext('2d');
+            context.drawImage(image, 0, 0);
+            var result = canvas.toDataURL('image/png');
+            resolve({ data: result.substring(result.indexOf(',') + 1), mimeType: 'image/png' });
+        };
+        image.onerror = function () { reject(new Error('The browser could not render the preview as PNG.')); };
+        image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    });
+}
+
+function capture(scope, elementId) {
+    if (scope === 'element') {
+        if (!elementId) fail('element_id is required when scope is element.');
+        return captureNode(findDom(elementId));
+    }
+    return captureNode(scope === 'document' ? document.body : document.documentElement);
+}
+
 root.AgentViewer = {
     ready: true,
     load: load,
@@ -284,6 +333,76 @@ root.AgentViewer = {
     selectElement: selectElement,
     switchTab: switchTab,
     scroll: scroll,
-    elementSelector: elementSelector
+    elementSelector: elementSelector,
+    capture: capture
 };
+
+if (new URLSearchParams(window.location.search).get('internal') === '1') {
+    var lastRevision = -1;
+    var commandBusy = false;
+
+    function postResult(command, result) {
+        return fetch('result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: command.id, ok: true, value: result })
+        });
+    }
+
+    function postError(command, error) {
+        return fetch('result', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: command.id, ok: false, error: error instanceof Error ? error.message : String(error) })
+        });
+    }
+
+    function executeCommand(command) {
+        var args = command.args || {};
+        try {
+            var value;
+            if (command.op === 'inspect') value = { elements: root.AgentViewer.inspect(args), state: root.AgentViewer.state() };
+            else if (command.op === 'select') value = root.AgentViewer.selectElement(args.elementId);
+            else if (command.op === 'switchTab') value = root.AgentViewer.switchTab(args.pageId, args.pagesId);
+            else if (command.op === 'scroll') value = root.AgentViewer.scroll(args);
+            else if (command.op === 'capture') return root.AgentViewer.capture(args.scope, args.elementId).then(function (image) { return postResult(command, image); }, function (error) { return postError(command, error); });
+            else if (command.op === 'state') value = root.AgentViewer.state();
+            else fail('Unknown browser command: ' + command.op);
+            return postResult(command, value).catch(function (error) { return postError(command, error); });
+        } catch (error) {
+            return postError(command, error);
+        }
+    }
+
+    function pollCommand() {
+        if (commandBusy) return;
+        commandBusy = true;
+        fetch('command', { cache: 'no-store' })
+            .then(function (response) { return response.status === 204 ? null : response.json(); })
+            .then(function (command) { return command ? executeCommand(command) : null; })
+            .catch(function () {})
+            .finally(function () { commandBusy = false; });
+    }
+
+    function refreshState() {
+        fetch('state-meta.json', { cache: 'no-store' })
+            .then(function (response) { return response.ok ? response.json() : null; })
+            .then(function (meta) {
+                if (!meta || !meta.available || meta.revision === lastRevision) return null;
+                return fetch('state.json', { cache: 'no-store' })
+                    .then(function (response) { return response.ok ? response.json() : null; })
+                    .then(function (input) {
+                        if (input) {
+                            root.AgentViewer.load(input);
+                            lastRevision = meta.revision;
+                        }
+                    });
+            })
+            .catch(function () {});
+    }
+
+    refreshState();
+    window.setInterval(refreshState, 300);
+    window.setInterval(pollCommand, 120);
+}
 })(window);

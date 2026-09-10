@@ -67,6 +67,7 @@ export class BrowserSession {
 
   async open(document: LoadedDocument): Promise<BrowserPreviewState> {
     const page = await this.ensurePage();
+    this.assets.setDocument(document);
     const state = await page.evaluate((input) => window.AgentViewer.load(input), {
       path: document.resolvedPath,
       content: document.content,
@@ -126,8 +127,13 @@ export class BrowserSession {
     this.page = null;
     this.context = null;
     this.browser = null;
+    this.assets.clearDocument();
     if (browser) await browser.close();
     await this.assets.close();
   }
-}
 
+  previewUrl(): string {
+    this.requirePage();
+    return this.assets.internalUrl();
+  }
+}

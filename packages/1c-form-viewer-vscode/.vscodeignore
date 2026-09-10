@@ -1,0 +1,7 @@
+**/*
+!extension.js
+!package.json
+!README.md
+!LICENSE
+!media/
+!media/**

@@ -2,6 +2,7 @@ export type PreviewFormat = 'form' | 'template' | 'mxl';
 
 export interface ViewerOptions {
   roots: string[];
+  allowAnyPath: boolean;
   viewport: { width: number; height: number };
   headless: boolean;
   maxBytes: number;
@@ -26,4 +27,3 @@ export interface BrowserPreviewState {
   tabs: Array<Record<string, unknown>>;
   scrolls: Array<Record<string, unknown>>;
 }
-

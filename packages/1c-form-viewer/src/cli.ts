@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   }
   if (!config.stdio) throw new Error('Only STDIO transport is supported. Pass --stdio.');
 
-  const loader = await FileLoader.create(config.roots, config.maxBytes);
+  const loader = await FileLoader.create(config.roots, config.maxBytes, process.cwd(), config.allowAnyPath);
   const browser = new BrowserSession(config);
   const controller = new ViewerController(loader, browser);
   const handle = serveStdio(() => createMcpServer(controller), {

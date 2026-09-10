@@ -2,17 +2,23 @@ import { createServer, type Server } from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import type { LoadedDocument } from './types.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
 };
+
+type PreviewDocument = Pick<LoadedDocument, 'resolvedPath' | 'content' | 'objectMeta'>;
 
 export class StaticAssetServer {
   private server: Server | null = null;
   private readonly token = randomBytes(24).toString('hex');
   private port = 0;
+  private current: PreviewDocument | null = null;
+  private revision = 0;
 
   constructor(private readonly assetsDir: string) {}
 
@@ -28,6 +34,33 @@ export class StaticAssetServer {
           return;
         }
         const relative = decodeURIComponent(requestUrl.pathname.slice(prefix.length)) || 'index.html';
+        if (relative === 'state-meta.json') {
+          response.writeHead(200, {
+            'Content-Type': MIME['.json'],
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          response.end(JSON.stringify({ revision: this.revision, available: !!this.current }));
+          return;
+        }
+        if (relative === 'state.json') {
+          if (!this.current) {
+            response.writeHead(404).end();
+            return;
+          }
+          response.writeHead(200, {
+            'Content-Type': MIME['.json'],
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          response.end(JSON.stringify({
+            revision: this.revision,
+            path: this.current.resolvedPath,
+            content: this.current.content,
+            objectMeta: this.current.objectMeta,
+          }));
+          return;
+        }
         const candidate = path.resolve(root, relative);
         if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) {
           response.writeHead(403).end();
@@ -60,12 +93,28 @@ export class StaticAssetServer {
     return `http://127.0.0.1:${this.port}/${this.token}/index.html`;
   }
 
+  internalUrl(): string {
+    const url = new URL(this.url());
+    url.searchParams.set('internal', '1');
+    return url.toString();
+  }
+
+  setDocument(document: PreviewDocument): void {
+    this.current = { ...document };
+    this.revision += 1;
+  }
+
+  clearDocument(): void {
+    this.current = null;
+    this.revision += 1;
+  }
+
   async close(): Promise<void> {
     const current = this.server;
     this.server = null;
     this.port = 0;
+    this.clearDocument();
     if (!current) return;
     await new Promise<void>((resolve) => current.close(() => resolve()));
   }
 }
-

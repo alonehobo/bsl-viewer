@@ -48,6 +48,7 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): CliConfig {
   let viewport = DEFAULT_VIEWPORT;
   let headless = false;
   let maxBytes = DEFAULT_MAX_BYTES;
+  let allowAnyPath = false;
   let stdio = false;
   let help = false;
   let version = false;
@@ -57,6 +58,7 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): CliConfig {
     if (arg === '--root') roots.push(path.resolve(cwd, requireValue(args, i++, arg)));
     else if (arg === '--viewport') viewport = parseViewport(requireValue(args, i++, arg));
     else if (arg === '--max-bytes') maxBytes = parsePositiveInt(requireValue(args, i++, arg), arg);
+    else if (arg === '--allow-any-path') allowAnyPath = true;
     else if (arg === '--headless') headless = true;
     else if (arg === '--stdio') stdio = true;
     else if (arg === '--help' || arg === '-h') help = true;
@@ -66,6 +68,7 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): CliConfig {
 
   return {
     roots: roots.length ? roots : [path.resolve(cwd)],
+    allowAnyPath,
     viewport,
     headless,
     maxBytes,
@@ -79,13 +82,14 @@ export function parseCliArgs(args: string[], cwd = process.cwd()): CliConfig {
 export const HELP = `1c-form-viewer 0.1.0
 
 Usage:
-  1c-form-viewer --stdio --root <path> [--root <path>...]
+  1c-form-viewer --stdio [--root <path>... | --allow-any-path]
                  [--viewport 1440x900] [--headless]
                  [--max-bytes 67108864]
 
 Options:
   --stdio               Run as a local MCP server over standard I/O.
   --root <path>         Allow read-only access below this directory (repeatable).
+  --allow-any-path      Allow absolute paths anywhere on this machine (read-only).
   --viewport <WxH>      Browser viewport, default 1440x900.
   --headless             Hide the Edge window (intended for CI).
   --max-bytes <number>  Maximum source file size, default 67108864.
