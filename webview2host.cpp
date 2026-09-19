@@ -69,9 +69,10 @@ public:
         if (SUCCEEDED(GetAvailableCoreWebView2BrowserVersionString(NULL, &ver)) && ver && *ver) {
             HRESULT hr = CopyOut(ver, value);
             CoTaskMemFree(ver);
+            ver = NULL;
             return hr;
         }
-        if (ver) CoTaskMemFree(ver);
+        if (ver) { CoTaskMemFree(ver); ver = NULL; }
         return CopyOut(L"86.0.616.0", value);
     }
     STDMETHODIMP put_TargetCompatibleBrowserVersion(LPCWSTR) { return S_OK; }
